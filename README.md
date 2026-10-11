@@ -6,6 +6,39 @@ A command-line client for [SpaceAPI](https://spaceapi.io), built on the independ
 
 Requires Swift 6.2+. The initial Linux CI target is Ubuntu 24.04 x86_64; macOS 26+ is also tested.
 
+### Prerequisites
+
+**macOS:** Xcode 26 or its Command Line Tools (`xcode-select --install`).
+
+**Ubuntu 24.04:** Swift is not in the distribution's package sources. Install the packages the Swift toolchain needs, then Swift itself with [swiftly](https://www.swift.org/install/linux/):
+
+```sh
+sudo apt-get update
+sudo apt-get install -y curl ca-certificates git gnupg2 binutils unzip tzdata pkg-config \
+  libc6-dev libcurl4-openssl-dev libedit2 libgcc-13-dev libstdc++-13-dev \
+  libncurses-dev libpython3-dev libsqlite3-0 libxml2-dev libz3-dev zlib1g-dev
+
+curl -O https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz
+tar zxf swiftly-$(uname -m).tar.gz
+./swiftly init --quiet-shell-followup
+. "${SWIFTLY_HOME_DIR:-$HOME/.local/share/swiftly}/env.sh"
+hash -r
+swiftly install --use 6.2
+swift --version
+```
+
+`swiftly init` prints any system packages that are still missing; install them and run `swift --version` again. Other distributions: see [swift.org/install](https://www.swift.org/install/linux/) for their package list. `python3` is needed only for the integration tests.
+
+**Without installing Swift:** build in the official container, as CI does. Only Docker is needed:
+
+```sh
+docker run --rm -v "$PWD":/src -w /src swift:6.2-noble swift build -c release
+```
+
+The resulting binary needs the Swift runtime libraries (see below), so run it inside that container or on a machine with Swift 6.2 installed.
+
+### Build
+
 ```sh
 git clone https://github.com/kerker00/SpaceStateCLI.git
 cd SpaceStateCLI

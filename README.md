@@ -86,13 +86,15 @@ LeineLab  ○ closed   for 2 h
 | Command | What it does |
 | --- | --- |
 | `spacestate [<space> ...]` | Show whether spaces are open. Without spaces: your saved spaces. |
-| `spacestate info [<space> ...]` | Everything a space publishes: website, address, access hint, contacts, keymasters, feeds, links, projects. |
+| `spacestate info [<space> ...]` | Show available details: website, address, access hint, contacts, keymasters, feeds, links, projects. |
 | `spacestate search <text> [--open]` | Find spaces by name, city or address; open ones first. |
 | `spacestate watch [<space> ...] [-i 5m] [-n <checks>]` | Print the current state, then a timed line whenever a space opens, closes or becomes unreachable. |
 | `spacestate add <space> ...` | Save spaces. |
 | `spacestate remove <space> ...` | Remove saved spaces. |
 
 A space is a name or a SpaceAPI endpoint URL. Names come from the [SpaceAPI directory](https://api.spaceapi.io), ignoring case and accents: an exact name wins, then a unique beginning, then a unique part of the name or host, so `spacestate main` finds Mainframe. When a name fits several spaces, the command lists them and stops; it never guesses. The directory is cached for an hour in `$XDG_CACHE_HOME/spacestate/` (default `~/.cache/spacestate/`); `--directory <url>` uses another aggregator in the same format. Endpoint URLs must be HTTP or HTTPS without embedded credentials.
+
+`info` shows fields decoded by SpaceStateKit. Text output lists keymasters by name or IRC nickname; `info --json` also includes their contact details.
 
 `spacestate --help` and `spacestate help <command>` describe every option.
 
@@ -146,6 +148,8 @@ Add `custom/spacestate` to your module list and configure:
 This is a persistent polling process (every 60 s; change it with `-i`). Do not add Waybar's `interval` setting to it. `--waybar` shows exactly one space: give it, or save exactly one. The output follows Waybar's `text`, `tooltip`, `class` and `alt` contract; `class` is `open`, `closed`, `unknown`, or `error`, and tooltip markup is escaped. Style `#custom-spacestate.open`, `.closed`, `.unknown`, and `.error` in your Waybar CSS.
 
 ## Development
+
+In the local multi-repository SpaceState workspace, the shared roadmap is `../Plan.md`. It is a workspace file, not part of this public repository.
 
 The normal build pins SpaceStateKit to `0.2.0`. To work on sibling checkouts:
 

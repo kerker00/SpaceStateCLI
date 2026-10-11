@@ -74,6 +74,7 @@ LeineLab   ○ closed   for 2 h
 | Command | What it does |
 | --- | --- |
 | `spacestate [<space> ...]` | Show whether spaces are open. Without spaces: your saved spaces. |
+| `spacestate info [<space> ...]` | Everything a space publishes: website, address, access hint, contacts, keymasters, feeds, links, projects. |
 | `spacestate search <text> [--open]` | Find spaces by name, city or address; open ones first. |
 | `spacestate watch [<space> ...] [-i 5m] [-n <checks>]` | Print the current state, then a timed line whenever a space opens, closes or becomes unreachable. |
 | `spacestate add <space> ...` | Save spaces. |
@@ -95,25 +96,25 @@ https://leinelab.org/api/spaceapi.json  # LeineLab
 ### Scripts
 
 - `-q` / `--quiet` prints nothing and answers with the exit code: 0 when every space is open, 1 when one is closed, 2 when one is unknown or unreachable. `spacestate -q mainframe && notify-send "Mainframe is open"`
-- `-j` / `--json` prints one JSON object per space and line (see below); `watch --json` does so on every check.
+- `-j` / `--json` prints JSON (see below).
 - Colors appear only on a terminal and honour `NO_COLOR`.
 
-Exit codes otherwise: 0 success, 1 network/data/output failure (including a space that could not be reached), 64 invalid arguments or a name that does not resolve. A closed space or an empty search is not an error. `watch` keeps running after network failures, reporting them; with `-n` it exits 0 when done.
+Exit codes otherwise: 0 success, 1 network/data/output failure (including a space that could not be reached by `show` or `info`), 64 invalid arguments or a name that does not resolve. A closed space or an empty search is not an error. `watch` keeps running after network failures, reporting them; with `-n` it exits 0 when done.
 
-## JSON contract, version 1
+## JSON
 
-`spacestate --json` and `watch --json` emit one object per line:
+`show --json` and `search --json` print an array with one object per space; `watch --json` prints one object per space and check, one per line:
 
 ```json
-{"schemaVersion":1,"endpoint":"https://example.org/spaceapi.json","name":"Example Space","status":"open","network":"ok","fetchedAt":"2026-10-10T20:00:00Z","observedAt":"2026-10-10T20:00:00Z"}
+{"checkedAt":"2026-10-11T17:31:25Z","endpoint":"https://status.mainframe.io/api/spaceInfo","message":"Open!","name":"Mainframe","since":"2026-10-11T15:57:08Z","status":"open"}
 ```
 
-- `status`: `open`, `closed`, or `unknown`. Missing published state is `unknown` even when networking succeeded.
-- `network`: `ok` or `error`. A failure emits `unknown` and an `error` string; the previous successful state is not repeated as current. `name` then comes from the directory or the saved spaces, if known.
-- `fetchedAt`: time this response was successfully retrieved; omitted for failure. For search, this is the aggregator retrieval time.
-- `observedAt`: time the snapshot was produced; `lastChange`: optional endpoint-reported state timestamp. Endpoint freshness cannot be guaranteed from retrieval time alone.
-- Optional fields `name`, `message`, `lastChange`, `fetchedAt`, and `error` are omitted when unavailable. Dates use ISO 8601 UTC.
-- `search --json` prints `{ "schemaVersion": 1, "spaces": [...] }`, with the same snapshot objects.
+- `status`: `open`, `closed`, or `unknown`. A space that publishes no state is `unknown` without an `error`.
+- `error`: set only when the space could not be reached or read; `status` is then `unknown`. `name` comes from the directory or the saved spaces, if known.
+- `since`: when the space says its state last changed. `checkedAt`: when this state was fetched; for `search`, when the aggregator last reached the space.
+- `message`, `since`, `name` and `error` are left out when empty. Dates use ISO 8601 UTC.
+
+`info --json` prints an array of the same objects, extended by whatever the space publishes: `website`, `logo`, `location` (`address`, `latitude`, `longitude`, `timezone`, `country`, `hint`), `icons` (`open`, `closed`), `contact`, `keymasters`, `feeds` (`kind`, `url`, `type`), `links`, `projects`, `linkedSpaces` and `apiCompatibility`. Parts the space does not publish are left out.
 
 Stdout contains only data; stderr contains diagnostics.
 
@@ -134,7 +135,7 @@ This is a persistent polling process (every 60 s; change it with `-i`). Do not a
 
 ## Development
 
-The normal build pins SpaceStateKit to `0.1.0`. To work on sibling checkouts:
+The normal build pins SpaceStateKit to `0.2.0`. To work on sibling checkouts:
 
 ```sh
 SPACESTATEKIT_PATH=../SpaceStateKit swift test
@@ -142,6 +143,6 @@ SPACESTATEKIT_PATH=../SpaceStateKit swift build -c release
 python3 IntegrationTests/run.py
 ```
 
-CI builds against the published Kit tag and runs unit tests plus real HTTP command tests. [CHANGELOG.md](CHANGELOG.md) records CLI and JSON contract changes. Update the pinned package version deliberately when adopting a Kit release.
+CI builds against the published Kit tag and runs unit tests plus real HTTP command tests. [CHANGELOG.md](CHANGELOG.md) records CLI and JSON changes. Update the pinned package version deliberately when adopting a Kit release.
 
 MIT; see [LICENSE.MD](LICENSE.MD).

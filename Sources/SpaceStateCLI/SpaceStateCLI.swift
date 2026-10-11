@@ -28,13 +28,14 @@ struct SpaceState: AsyncParsableCommand {
 
         Examples:
           spacestate mainframe            Is Mainframe open?
+          spacestate info mainframe       Address, contacts, feeds and links
           spacestate search berlin        Find spaces
           spacestate add mainframe        Save it, then just run `spacestate`
           spacestate watch -i 5m          Follow your saved spaces
           spacestate -q mainframe && echo open
         """,
         version: CLI.version,
-        subcommands: [Show.self, Search.self, Watch.self, Add.self, Remove.self],
+        subcommands: [Show.self, Info.self, Search.self, Watch.self, Add.self, Remove.self],
         defaultSubcommand: Show.self
     )
 }
@@ -126,7 +127,7 @@ struct Show: AsyncParsableCommand {
     @Argument(help: "Space names or endpoint URLs. Defaults to your saved spaces.")
     var spaces: [String] = []
 
-    @Flag(name: .shortAndLong, help: "Print one JSON object per space, one per line.")
+    @Flag(name: .shortAndLong, help: "Print a JSON array.")
     var json = false
 
     @Flag(name: .shortAndLong, help: "Print nothing. Exit 0 if all are open, 1 if one is closed, 2 if one is unknown.")
@@ -148,11 +149,37 @@ struct Show: AsyncParsableCommand {
         let results = await snapshots(targets)
         if quiet { throw ExitCode(Output.exitCode(results)) }
         if json {
-            for snapshot in results { try write(Output.json(snapshot)) }
+            try write(Output.json(results))
         } else {
             try write(Output.table(results, color: terminalSupportsColor()))
         }
         if results.contains(where: \.failed) { throw ExitCode.failure }
+    }
+}
+
+struct Info: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Show everything a space publishes: address, access hint, contacts, feeds and links.")
+
+    @Argument(help: "Space names or endpoint URLs. Defaults to your saved spaces.")
+    var spaces: [String] = []
+
+    @Flag(name: .shortAndLong, help: "Print a JSON array.")
+    var json = false
+
+    @OptionGroup var lookup: DirectoryOptions
+
+    func run() async throws {
+        let targets = try await lookup.targets(spaces)
+        guard !targets.isEmpty else { throw usageFailure(noSavedSpaces) }
+        let profiles = await snapshots(targets).map(Profile.init)
+        if json {
+            try write(Output.json(profiles))
+        } else {
+            let color = terminalSupportsColor()
+            try write(profiles.map { $0.text(color: color) }.joined(separator: "\n\n"))
+        }
+        if profiles.contains(where: \.snapshot.failed) { throw ExitCode.failure }
     }
 }
 
@@ -225,7 +252,7 @@ struct Watch: AsyncParsableCommand {
         guard !targets.isEmpty else { throw usageFailure(noSavedSpaces) }
         if waybar && targets.count != 1 { throw usageFailure("--waybar shows a single space; give exactly one.") }
         let color = terminalSupportsColor()
-        var previous: [String: (SpaceStatus, Bool)] = [:]
+        var previous: [URL: (SpaceStatus, Bool)] = [:]
         var checks = 0
         while true {
             let results = await snapshots(targets)

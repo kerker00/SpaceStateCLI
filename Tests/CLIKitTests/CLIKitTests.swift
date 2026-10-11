@@ -90,7 +90,7 @@ struct CLIKitTests {
     @Test func outputEscapesMarkupAndTerminalControls() throws {
         let info = SpaceInfo(name: "Space\nInjected", state: .init(open: true, lastChange: nil, message: "<b>&\n", triggerPerson: nil))
         let snapshot = Snapshot(target("Space", "space.test"), info: info)
-        #expect(Output.table([snapshot], color: false) == "Space Injected  ● open                <b>&")
+        #expect(Output.table([snapshot], color: false) == "Space Injected  ● open" + String(repeating: " ", count: 17) + "<b>&")
         let encoded = try Output.waybar(snapshot)
         #expect(!encoded.contains("\n"))
         let decoded = try #require(JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any])

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0 — 2026-10-11
+
+Breaking: the JSON output is simpler.
+
+- New `info` command: website, address with country, access hint, contacts, keymasters, feeds, links, projects and linked spaces, as text or JSON.
+- JSON: `show --json` and `search --json` print an array; `watch --json` keeps one object per line. `schemaVersion`, `network`, `fetchedAt` and `observedAt` are gone; `lastChange` is now `since`, and `checkedAt` tells when the state was fetched (for `search`: when the aggregator last reached the space). `error` alone marks an unreachable space.
+- Uses SpaceStateKit 0.2.0.
+
 ## 0.2.0 — 2026-10-11
 
 Breaking: the command line is redesigned for people; the 0.1.0 commands and options are gone.

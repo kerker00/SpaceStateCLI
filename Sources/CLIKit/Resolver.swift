@@ -2,7 +2,7 @@ import Foundation
 import SpaceAPI
 
 public enum CLI {
-    public static let version = "0.2.0"
+    public static let version = "0.3.0"
 }
 
 public struct UsageError: Error, CustomStringConvertible {

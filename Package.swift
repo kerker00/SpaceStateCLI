@@ -10,7 +10,7 @@ let package = Package(
     products: [.executable(name: "spacestate", targets: ["SpaceStateCLI"])],
     dependencies: [
         localKit.map { .package(path: $0) }
-            ?? .package(url: "https://github.com/kerker00/SpaceStateKit.git", exact: "0.1.0"),
+            ?? .package(url: "https://github.com/kerker00/SpaceStateKit.git", exact: "0.2.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.8.0"),
     ],
     targets: [

@@ -61,11 +61,53 @@ struct CLIKitTests {
         #expect(failure.status == .unknown)
         #expect(failure.failed)
         #expect(failure.name == "Space")
-        #expect(failure.fetchedAt == nil)
         let json = try #require(JSONSerialization.jsonObject(with: Data(Output.json(failure).utf8)) as? [String: Any])
-        #expect(json["schemaVersion"] as? Int == 1)
+        #expect(Set(json.keys) == ["endpoint", "name", "status", "checkedAt", "error"])
         #expect(json["error"] as? String == "offline")
-        #expect(json["network"] as? String == "error")
+        #expect(json["endpoint"] as? String == "https://space.test/spaceapi.json")
+    }
+
+    @Test func directoryEntriesUseTheAggregatorsTime() {
+        let seen = Date(timeIntervalSince1970: 1_000)
+        let entry = DirectoryEntry(endpoint: URL(string: "https://a.test/api")!, info: SpaceInfo(name: "A"), lastSeen: seen)
+        #expect(Snapshot(entry).checkedAt == seen)
+    }
+
+    @Test func profileShowsOnlyWhatTheSpacePublishes() throws {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        var info = SpaceInfo(
+            name: "Lab", website: URL(string: "https://lab.test"),
+            location: .init(address: "Street 1", latitude: nil, longitude: nil, timezone: nil, countryCode: "DE", hint: "Ring twice"),
+            state: .init(open: true, lastChange: nil, message: nil, triggerPerson: nil),
+            contact: .init(email: "hi@lab.test", mastodon: "@lab@social.test", keymasters: [.init(name: "Ada", email: "a@lab.test")]),
+            links: [.init(name: "Wiki", url: URL(string: "https://wiki.lab.test")!)])
+        info.feeds.calendar = .init(url: URL(string: "https://lab.test/cal.ics")!, type: "ical")
+        let profile = Profile(Snapshot(target("Lab", "lab.test"), info: info, now: now))
+        #expect(profile.text(color: false, now: now) == """
+            Lab  ● open
+              Website     https://lab.test
+              Address     Street 1 (DE)
+              Access      Ring twice
+              Contact     Email     hi@lab.test
+                          Mastodon  @lab@social.test
+              Keymasters  Ada
+              Feeds       Calendar  https://lab.test/cal.ics
+              Links       Wiki  https://wiki.lab.test
+              Endpoint    https://lab.test/spaceapi.json
+            """)
+        let json = try #require(JSONSerialization.jsonObject(with: Data(Output.json(profile).utf8)) as? [String: Any])
+        #expect(json["name"] as? String == "Lab")
+        #expect((json["location"] as? [String: Any])?["country"] as? String == "DE")
+        #expect((json["keymasters"] as? [[String: Any]])?.first?["email"] as? String == "a@lab.test")
+        #expect((json["feeds"] as? [[String: Any]])?.first?["kind"] as? String == "calendar")
+        #expect(json["projects"] == nil)
+        #expect(json["icons"] == nil)
+
+        let unreachable = Profile(Snapshot(target("Gone", "gone.test"), info: nil, error: "timeout", now: now))
+        #expect(unreachable.text(color: false, now: now) == """
+            Gone  ? unknown              unreachable: timeout
+              Endpoint    https://gone.test/spaceapi.json
+            """)
     }
 
     @Test func tableAlignsAndQuietCodeSummarises() {

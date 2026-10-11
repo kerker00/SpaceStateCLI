@@ -1,6 +1,6 @@
 # SpaceStateCLI
 
-A command-line client for [SpaceAPI](https://spaceapi.io), built on the independently maintained [SpaceStateKit](https://github.com/kerker00/SpaceStateKit). Ask by name whether a space is open, save your spaces, follow them, or feed scripts and Waybar. No account is required.
+A command-line client for [SpaceAPI](https://spaceapi.io), built on the independently maintained [SpaceStateKit](https://github.com/kerker00/SpaceStateKit). Ask by name whether a space is open, see how to get in and reach it, save your spaces, follow them, or feed scripts and Waybar. No account is required.
 
 ## Build and run
 
@@ -69,6 +69,18 @@ Saved LeineLab.
 $ spacestate
 Mainframe  ● open     for 36 min  Open!
 LeineLab   ○ closed   for 2 h
+
+$ spacestate info leinelab
+LeineLab  ○ closed   for 2 h
+  Website     https://leinelab.org
+  Address     Hüttenstraße 22B, 30165 Hannover, Germany (DE)
+  Access      If sign is red, space is locked. …
+  Contact     Email     anfragen@leinelab.org
+              Mastodon  @leinelab@chaos.social
+  Feeds       Calendar  https://leinelab.org/…/dokuwiki-56d0397423f22.ics
+              Wiki      https://leinelab.org/feed.php
+  Projects    https://github.com/LeineLab
+  Endpoint    https://leinelab.org/api/spaceapi.json
 ```
 
 | Command | What it does |

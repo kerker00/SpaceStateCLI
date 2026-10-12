@@ -159,7 +159,7 @@ struct Show: AsyncParsableCommand {
 
 struct Info: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Show everything a space publishes: address, access hint, contacts, feeds and links.")
+        abstract: "Show available details: address, access hint, contacts, feeds and links.")
 
     @Argument(help: "Space names or endpoint URLs. Defaults to your saved spaces.")
     var spaces: [String] = []

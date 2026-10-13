@@ -10,7 +10,7 @@
 - Classify CLI input/configuration validation errors as exit code 64, including
   invalid endpoint URLs, while retaining the parser's help, version and completion commands.
 - Directory entries from network, fresh cache and stale fallback use the same
-  per-entry endpoint validation. Adoption requires the Kit 0.3.1 source release.
+  per-entry endpoint validation. Adopts the exact published Kit 0.3.1 source release.
 
 ## 0.3.0 — 2026-10-11
 

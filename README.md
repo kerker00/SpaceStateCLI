@@ -92,7 +92,7 @@ LeineLab  ○ closed   for 2 h
 | `spacestate add <space> ...` | Save spaces. |
 | `spacestate remove <space> ...` | Remove saved spaces. |
 
-A space is a name or a SpaceAPI endpoint URL. Names come from the [SpaceAPI directory](https://api.spaceapi.io), ignoring case and accents: an exact name wins, then a unique beginning, then a unique part of the name or host, so `spacestate main` finds Mainframe. When a name fits several spaces, the command lists them and stops; it never guesses. The directory is cached for an hour in `$XDG_CACHE_HOME/spacestate/` (default `~/.cache/spacestate/`); `--directory <url>` uses another aggregator in the same format. Endpoint URLs must be HTTP or HTTPS without embedded credentials.
+A space is a name or a SpaceAPI endpoint URL. Names come from the [SpaceAPI directory](https://api.spaceapi.io), ignoring case and accents: an exact name wins, then a unique beginning, then a unique part of the name or host, so `spacestate main` finds Mainframe. When a name fits several spaces, the command lists them and stops; it never guesses. The directory is cached for an hour in `$XDG_CACHE_HOME/spacestate/` (default `~/.cache/spacestate/`); `--directory <url>` uses another aggregator in the same format. Endpoint URLs must be absolute HTTP(S) URLs with a host and a port from 1 to 65535 when specified, without embedded credentials or literal/percent-encoded control characters. The same Kit validation applies to directory and saved-space entries. Endpoint validation errors exit with 64 and do not echo the supplied URL.
 
 `info` shows fields decoded by SpaceStateKit. Text output lists keymasters by name or IRC nickname; `info --json` also includes their contact details.
 
@@ -151,7 +151,7 @@ This is a persistent polling process (every 60 s; change it with `-i`). Do not a
 
 In the local multi-repository SpaceState workspace, the shared roadmap is `../Plan.md`. It is a workspace file, not part of this public repository.
 
-The normal build pins SpaceStateKit to `0.2.0`. To work on sibling checkouts:
+The normal build pins SpaceStateKit to `0.3.1`. To work on sibling checkouts:
 
 ```sh
 SPACESTATEKIT_PATH=../SpaceStateKit swift test

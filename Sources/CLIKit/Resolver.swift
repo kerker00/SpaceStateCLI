@@ -39,13 +39,24 @@ public enum Resolver {
     }
 
     public static func webURL(_ string: String) throws -> URL {
-        guard let components = URLComponents(string: string),
-              ["http", "https"].contains(components.scheme?.lowercased() ?? ""),
-              let host = components.host, !host.isEmpty,
-              components.user == nil, components.password == nil, let url = components.url else {
-            throw UsageError("Expected an HTTP(S) URL without embedded credentials: \(string)")
+        do {
+            return try SpaceEndpoint.parse(string)
+        } catch {
+            throw invalidEndpoint
         }
-        return url
+    }
+
+    static func validateEndpoint(_ url: URL) throws {
+        do {
+            try SpaceEndpoint.validate(url)
+        } catch {
+            throw invalidEndpoint
+        }
+    }
+
+    // Input may contain credentials or terminal controls; do not repeat it in errors.
+    private static var invalidEndpoint: UsageError {
+        UsageError("Expected an HTTP(S) endpoint with a host and valid port, without credentials or control characters")
     }
 
     /// Prefers an exact name, then names starting with the query, then names or hosts containing it.

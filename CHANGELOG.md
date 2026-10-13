@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Use SpaceStateKit's shared endpoint validation for manual URLs, saved spaces and
+  directory sources before network or cache access. Invalid saved-space batches
+  leave the file unchanged, and errors do not repeat credentials or control characters.
+- Reject unexpected trailing text in saved-space lines while retaining CRLF,
+  whitespace separators and optional `#` comments.
+- Classify CLI input/configuration validation errors as exit code 64, including
+  invalid endpoint URLs, while retaining the parser's help, version and completion commands.
+- Directory entries from network, fresh cache and stale fallback use the same
+  per-entry endpoint validation. Adoption requires the Kit 0.3.1 source release.
+
 ## 0.3.0 — 2026-10-11
 
 Breaking: the JSON output is simpler.

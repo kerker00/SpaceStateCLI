@@ -13,7 +13,18 @@ enum Main {
     static func main() async {
         // Broken pipes are reported by FileHandle instead of terminating in the middle of a write.
         signal(SIGPIPE, SIG_IGN)
-        await SpaceState.main()
+        do {
+            var command = try await SpaceState.asyncParseAsRoot()
+            if var asyncCommand = command as? any AsyncParsableCommand {
+                try await asyncCommand.run()
+            } else {
+                try command.run()
+            }
+        } catch let error as UsageError {
+            SpaceState.exit(withError: usageFailure(error.description))
+        } catch {
+            SpaceState.exit(withError: error)
+        }
     }
 }
 

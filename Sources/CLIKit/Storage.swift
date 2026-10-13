@@ -40,6 +40,7 @@ public struct SavedSpaces: Sendable {
     /// Appends the targets that are not saved yet and returns them.
     @discardableResult
     public func add(_ targets: [Target]) throws -> [Target] {
+        for target in targets { try Resolver.validateEndpoint(target.endpoint) }
         var known = Set(try load().map(\.endpoint))
         let new = targets.filter { known.insert($0.endpoint).inserted }
         guard !new.isEmpty else { return [] }
@@ -51,6 +52,7 @@ public struct SavedSpaces: Sendable {
     }
 
     public func remove(_ targets: [Target]) throws {
+        for target in targets { try Resolver.validateEndpoint(target.endpoint) }
         let endpoints = Set(targets.map(\.endpoint))
         try write(try lines().filter { line in
             guard let target = try? Self.parse(line) else { return true }
@@ -63,14 +65,20 @@ public struct SavedSpaces: Sendable {
         guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { return nil }
         let url = trimmed.prefix { !$0.isWhitespace }
         let rest = trimmed.dropFirst(url.count).trimmingCharacters(in: .whitespaces)
+        guard rest.isEmpty || rest.hasPrefix("#") else {
+            throw UsageError("Expected one endpoint followed by an optional # comment")
+        }
         let name = rest.hasPrefix("#") ? rest.dropFirst().trimmingCharacters(in: .whitespaces) : ""
         return Target(endpoint: try Resolver.webURL(String(url)), name: name.isEmpty ? nil : name)
     }
 
     private func lines() throws -> [String] {
         guard FileManager.default.fileExists(atPath: file.path) else { return [] }
-        var lines = try String(contentsOf: file, encoding: .utf8)
-            .split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        // CRLF is one extended grapheme cluster in Swift, so normalize it before
+        // splitting by the LF Character. Bare controls inside a URL remain invalid.
+        let content = try String(contentsOf: file, encoding: .utf8)
+            .replacingOccurrences(of: "\r\n", with: "\n")
+        var lines = content.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         while lines.last?.isEmpty == true { lines.removeLast() }
         return lines
     }
@@ -87,6 +95,7 @@ public enum DirectoryLoader {
     public static func load(
         from url: URL, cache: URL?, maxAge: TimeInterval?, client: StatusClient = StatusClient(), now: Date = Date()
     ) async throws -> [DirectoryEntry] {
+        try Resolver.validateEndpoint(url)
         if let cache, let maxAge, let modified = modificationDate(cache), now.timeIntervalSince(modified) < maxAge,
            let entries = cached(cache) {
             return entries

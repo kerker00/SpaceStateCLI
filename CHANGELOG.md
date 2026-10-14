@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Adopt exact Kit 0.3.2 observation APIs. Separate original observation, receipt,
+  attempt and expiry; stale or unproven data provides unknown current status in
+  text, JSON, quiet mode, search filtering and Waybar. Invalid optional times are omitted.
+- JSON contract: `checkedAt` is now optional source evidence, never a substituted
+  client time on missing directory observations or first failures. Add
+  `attemptedAt`, `receivedAt`, `expiresAt`, `freshness`, `reportedStatus` and `source`.
+- Preserve directory cache receipt and advertised age policy in a source-bound
+  envelope; retain legacy raw-cache reading and cached names on failed refresh
+  without publishing current flags. Cancellation does not select stale fallback.
+- Watch preserves last known values on errors and emits observation expiry between
+  network checks, including a delayed wake before the next request. Expiry events
+  do not count toward `-n` or move the polling deadline.
 - Use SpaceStateKit's shared endpoint validation for manual URLs, saved spaces and
   directory sources before network or cache access. Invalid saved-space batches
   leave the file unchanged, and errors do not repeat credentials or control characters.

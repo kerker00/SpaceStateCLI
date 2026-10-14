@@ -62,7 +62,7 @@ struct CLIKitTests {
         #expect(failure.failed)
         #expect(failure.name == "Space")
         let json = try #require(JSONSerialization.jsonObject(with: Data(Output.json(failure).utf8)) as? [String: Any])
-        #expect(Set(json.keys) == ["endpoint", "name", "status", "checkedAt", "error"])
+        #expect(Set(json.keys) == ["endpoint", "name", "status", "reportedStatus", "attemptedAt", "freshness", "error"])
         #expect(json["error"] as? String == "offline")
         #expect(json["endpoint"] as? String == "https://space.test/spaceapi.json")
     }

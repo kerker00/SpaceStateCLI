@@ -2,7 +2,7 @@
 """CLI contract checks using real HTTP and the release executable."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-import json, os, subprocess, tempfile, threading
+import json, os, subprocess, tempfile, threading, time
 
 requests = []
 request_lock = threading.Lock()
@@ -13,7 +13,7 @@ class Handler(BaseHTTPRequestHandler):
         with request_lock: requests.append(self.path)
         info={'space':'Test Space','state':{'open':True,'message':'<Guests welcome>'},'location':{'address':'Street 1','country_code':'DE','hint':'Ring twice'},'contact':{'email':'hi@example.org'}}
         lab={'space':'Test Lab','state':{'open':False}}
-        body = json.dumps([{'url':base+'/ok','data':info},{'url':base+'/error','data':lab}]) if self.path=='/directory' else json.dumps(info)
+        body = json.dumps([{'url':base+'/ok','lastSeen':time.time(),'data':info},{'url':base+'/error','lastSeen':time.time(),'data':lab}]) if self.path=='/directory' else json.dumps(info)
         if self.path == '/mixed-directory':
             body = json.dumps([{'url':base+'/ok','data':info}] + [
                 {'url':url,'data':{'space':'Test Invalid'}} for url in [
@@ -22,7 +22,23 @@ class Handler(BaseHTTPRequestHandler):
                     base+'/%0A', base+'/unexpected\n', base.rsplit(':',1)[0]+':65536/unexpected',
                 ]
             ])
+        if self.path == '/freshness-directory':
+            observed = time.time()
+            body = json.dumps([
+                {'url':base+'/ok','lastSeen':observed-5,'data':{'space':'Case Fresh','state':{'open':True}}},
+                {'url':base+'/stale','lastSeen':observed-901,'data':{'space':'Case Stale','state':{'open':True}}},
+                {'url':base+'/missing','data':{'space':'Case Missing','state':{'open':False}}},
+                {'url':base+'/future','lastSeen':observed+10,'data':{'space':'Case Future','state':{'open':True}}},
+                {'url':base+'/unreachable','lastSeen':observed-1,'validationResult':{'reachable':False},'data':{'space':'Case Unreachable','state':{'open':True}}},
+                {'url':base+'/huge','lastSeen':1e300,'data':{'space':'Case Huge','state':{'open':True}}},
+            ])
+        if self.path == '/short-policy':
+            body = json.dumps([{'url':base+'/ok','lastSeen':time.time()-10,'data':info}])
+        if self.path == '/bad-time':
+            info['state']['lastchange'] = 1e300
+            body = json.dumps(info)
         self.send_response(503 if self.path=='/error' else 200)
+        if self.path == '/short-policy': self.send_header('X-SpacePush-Max-Data-Age','2')
         self.end_headers(); self.wfile.write(body.encode())
 
 server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
@@ -56,6 +72,25 @@ try:
     with request_lock: assert requests == ['/mixed-directory'], requests
     [status]=json.loads(run('show',base+'/ok','--json').stdout)
     assert status['status']=='open' and status['name']=='Test Space' and 'error' not in status and status['checkedAt']
+    assert status['freshness']=='current' and status['reportedStatus']=='open'
+    assert status['receivedAt'] and status['attemptedAt'] and status['expiresAt']
+    assert 'since' not in json.loads(run('show',base+'/bad-time','--json').stdout)[0]
+    cases = json.loads(run('search','case','--json','--directory',base+'/freshness-directory').stdout)
+    by_name = {entry['name']:entry for entry in cases}
+    assert by_name['Case Fresh']['status']=='open', cases
+    for name in ['Case Stale','Case Missing','Case Future','Case Unreachable','Case Huge']:
+        assert by_name[name]['status']=='unknown' and 'error' not in by_name[name], cases
+    assert by_name['Case Stale']['freshness']=='stale' and by_name['Case Stale']['reportedStatus']=='open'
+    for name in ['Case Missing','Case Future','Case Huge']: assert 'checkedAt' not in by_name[name], cases
+    [current] = json.loads(run('search','case','--open','--json','--directory',base+'/freshness-directory').stdout)
+    assert current['name']=='Case Fresh'
+    [short] = json.loads(run('search','test','--json','--directory',base+'/short-policy').stdout)
+    assert short['status']=='unknown' and short['freshness']=='stale', short
+    cache = Path(env['XDG_CACHE_HOME'])/'spacestate/directory.json'
+    cache.parent.mkdir(parents=True,exist_ok=True)
+    cache.write_text(json.dumps([{'url':base+'/ok','lastSeen':time.time()-2000,'data':{'space':'Cached Only','state':{'open':True}}}]))
+    [resolved] = json.loads(run('show','cached only','--json').stdout)
+    assert resolved['endpoint']==base+'/ok' and resolved['status']=='open' and resolved['source']=='direct'
     assert run(base+'/ok').stdout.startswith('Test Space  ● open')
     assert json.loads(run('test space','--json',*directory).stdout)[0]['endpoint']==base+'/ok'
     assert 'matches 2 spaces' in run('test',*directory,code=64).stderr
@@ -65,6 +100,8 @@ try:
     assert len(json.loads(run('search','test','--open','--json',*directory).stdout))==1
     assert not run('search','missing',*directory).stdout
     assert 'unreachable' in run(base+'/error',code=1).stdout
+    [failed_status]=json.loads(run('show',base+'/error','--json',code=1).stdout)
+    assert failed_status['attemptedAt'] and failed_status['freshness']=='unknown' and 'checkedAt' not in failed_status
     assert run('-q',base+'/ok').stdout==''
     run('-q',base+'/error',code=2)
     assert 'No saved spaces' in run().stderr
@@ -88,5 +125,5 @@ try:
     assert waybar['class']=='open' and waybar['tooltip']=='&lt;Guests welcome&gt;'
     run('watch','--waybar','-n1',base+'/ok',base+'/error',code=64)
     run('watch','-i','2s',code=64)
-    print('CLI endpoint validation, directory filtering, HTTP, names, saved spaces, search, info, JSON, watch, Waybar and exit-code checks passed')
+    print('CLI observation freshness, source times, directory policy/cache names, endpoint validation, HTTP, saved spaces, JSON, watch, Waybar and exit-code checks passed')
 finally: server.shutdown(); server.server_close(); home.cleanup()

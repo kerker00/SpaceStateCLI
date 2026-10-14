@@ -88,7 +88,7 @@ LeineLab  ○ closed   for 2 h
 | `spacestate [<space> ...]` | Show whether spaces are open. Without spaces: your saved spaces. |
 | `spacestate info [<space> ...]` | Show available details: website, address, access hint, contacts, keymasters, feeds, links, projects. |
 | `spacestate search <text> [--open]` | Find spaces by name, city or address; open ones first. |
-| `spacestate watch [<space> ...] [-i 5m] [-n <checks>]` | Print the current state, then a timed line whenever a space opens, closes or becomes unreachable. |
+| `spacestate watch [<space> ...] [-i 5m] [-n <checks>]` | Print the current state, then changes, failures and expiry between checks. |
 | `spacestate add <space> ...` | Save spaces. |
 | `spacestate remove <space> ...` | Remove saved spaces. |
 
@@ -117,16 +117,42 @@ Exit codes otherwise: 0 success, 1 network/data/output failure (including a spac
 
 ## JSON
 
-`show --json` and `search --json` print an array with one object per space; `watch --json` prints one object per space and check, one per line:
+`show --json` and `search --json` print an array with one object per space; `watch --json` prints one object per space and check, plus changed expiry records, one per line:
 
 ```json
-{"checkedAt":"2026-10-11T17:31:25Z","endpoint":"https://status.mainframe.io/api/spaceInfo","message":"Open!","name":"Mainframe","since":"2026-10-11T15:57:08Z","status":"open"}
+{"attemptedAt":"2026-10-13T21:31:24Z","checkedAt":"2026-10-13T21:31:25Z","endpoint":"https://status.mainframe.io/api/spaceInfo","expiresAt":"2026-10-13T21:46:25Z","freshness":"current","message":"Open!","name":"Mainframe","receivedAt":"2026-10-13T21:31:25Z","reportedStatus":"open","since":"2026-10-13T15:57:08Z","source":"direct","status":"open"}
 ```
 
-- `status`: `open`, `closed`, or `unknown`. A space that publishes no state is `unknown` without an `error`.
-- `error`: set only when the space could not be reached or read; `status` is then `unknown`. `name` comes from the directory or the saved spaces, if known.
-- `since`: when the space says its state last changed. `checkedAt`: when this state was fetched; for `search`, when the aggregator last reached the space.
-- `message`, `since`, `name` and `error` are left out when empty. Dates use ISO 8601 UTC.
+- `status`: the effective current state, `open`, `closed`, or `unknown`. Missing, future, expired or unproven observations cannot provide a current open/closed flag. A space that publishes no state remains `unknown` even with current timing.
+- `reportedStatus`: the last known published state, which may differ from the effective status. `freshness` is `current`, `stale` or `unknown`; age and read failure are distinct.
+- `error`: set when the endpoint or directory read fails; effective `status` is then `unknown`. A watch or directory fallback may retain last known data and source times. `name` comes from the directory or saved spaces when no successful value is available.
+- `since`: when the space says its state last changed; this does not prove freshness. `checkedAt` is now only a usable original successful observation: direct receipt, or directory `lastSeen`. It is absent when the source time is missing, invalid or future, and on a first failed read. It is never replaced with the client's current time to fill missing evidence.
+- `attemptedAt`: the client check/attempt, including an unsuccessful read or cache lookup. `receivedAt`: successful client receipt, retained from a cached directory or earlier successful watch read. `expiresAt`: the conservative observation limit; reevaluating a retained snapshot changes status/freshness without changing these times.
+- `source` identifies the direct or aggregator read path. Optional values are omitted when absent or unusable. Dates use ISO 8601 UTC.
+
+This is an unreleased JSON-contract change: consumers that assumed `checkedAt`
+always existed must handle its absence and use `attemptedAt` for attempts.
+Direct reads use Kit 0.3.2's 15-minute retention limit. A directory's advertised
+`X-SpacePush-Max-Data-Age` is honored; absent policy uses the same default, while
+malformed policy cannot provide a current flag. Downloading or reusing the list
+does not refresh its original per-space observations. `search --open` and ordering
+use effective current states. Directory validation failures remain unknown.
+
+Name caches now store their original successful receipt, source URL, age policy
+and body together. Touching the file does not refresh that receipt; old raw-array
+caches remain readable using their file time and original `lastSeen`. A failed
+refresh can supply cached names with a visible error, never current opening flags.
+Older CLI binaries may refetch an envelope cache; saved-space files are unchanged.
+
+`watch` retains the last good in-memory value on a failed check, labelling its
+current state unknown and preserving source times. During long polling intervals,
+expiry emits unknown before the next request; a delayed timer also emits this
+transition before starting a new read. `-n` counts network check rounds, not expiry
+events. When watch exits, consumers must still honor the advertised expiry of its
+last output. Direct HTTP receipt proves a usable answer was received, not a fresh
+physical measurement. Text and Waybar distinguish stale or unproven observations
+from an unreachable endpoint; Waybar's existing open/closed/unknown/error classes
+are retained.
 
 `info --json` prints an array of the same objects, extended by whatever the space publishes: `website`, `logo`, `location` (`address`, `latitude`, `longitude`, `timezone`, `country`, `hint`), `icons` (`open`, `closed`), `contact`, `keymasters`, `feeds` (`kind`, `url`, `type`), `links`, `projects`, `linkedSpaces` and `apiCompatibility`. Parts the space does not publish are left out.
 
@@ -151,7 +177,7 @@ This is a persistent polling process (every 60 s; change it with `-i`). Do not a
 
 In the local multi-repository SpaceState workspace, the shared roadmap is `../Plan.md`. It is a workspace file, not part of this public repository.
 
-The normal build pins SpaceStateKit to `0.3.1`. To work on sibling checkouts:
+The normal build pins SpaceStateKit to `0.3.2`. To work on sibling checkouts:
 
 ```sh
 SPACESTATEKIT_PATH=../SpaceStateKit swift test

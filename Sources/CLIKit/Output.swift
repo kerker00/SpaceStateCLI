@@ -10,38 +10,110 @@ import Darwin
 public struct Snapshot: Encodable, Sendable {
     public let endpoint: URL
     public let name: String?
-    public let status: SpaceStatus
+    public var status: SpaceStatus {
+        error == nil && freshness == .current ? reportedStatus : .unknown
+    }
+    public let reportedStatus: SpaceStatus
     public let message: String?
     /// When the space says its state last changed.
     public let since: Date?
-    /// When this state was fetched, or when fetching failed.
-    public let checkedAt: Date
+    /// Original successful observation, never synthesized for missing lastSeen.
+    public var checkedAt: Date? {
+        guard let timing, let observed = Self.date(timing.observedAt), observed <= timing.receivedAt else { return nil }
+        return observed
+    }
+    public let attemptedAt: Date
+    public var receivedAt: Date? { Self.date(timing?.receivedAt) }
+    public var expiresAt: Date? { Self.date(timing?.expiresAt) }
+    public var source: ObservationSource? { timing?.source }
+    public var freshness: ObservationFreshness {
+        guard checkedAt != nil, receivedAt != nil, expiresAt != nil else { return .unknown }
+        return timing?.freshness(at: evaluatedAt) ?? .unknown
+    }
     public let error: String?
     /// The whole document, for `info`; not part of the JSON.
     public let info: SpaceInfo?
+    private let timing: ObservationTiming?
+    private var evaluatedAt: Date
+    var evaluationDate: Date { evaluatedAt }
 
     private enum CodingKeys: String, CodingKey {
-        case endpoint, name, status, message, since, checkedAt, error
+        case endpoint, name, status, reportedStatus, message, since, checkedAt, attemptedAt, receivedAt, expiresAt, source, freshness, error
     }
 
     /// Falls back to the target's known name when the space cannot be reached.
     public init(_ target: Target, info: SpaceInfo?, error: String? = nil, now: Date = Date()) {
+        self.init(target, info: info, timing: info.map { _ in
+            ObservationTiming(source: .direct, observedAt: now, receivedAt: now)
+        }, error: error, attemptedAt: now, now: now)
+    }
+
+    public init(_ target: Target, observation: StatusObservation<SpaceInfo>, attemptedAt: Date? = nil, now: Date = Date()) {
+        self.init(target, info: observation.value, timing: observation.timing,
+                  error: nil, attemptedAt: attemptedAt ?? now, now: now)
+    }
+
+    private init(_ target: Target, info: SpaceInfo?, timing: ObservationTiming?, error: String?, attemptedAt: Date, now: Date) {
         endpoint = target.endpoint
         name = info?.name ?? target.name
-        status = info?.status ?? .unknown
+        reportedStatus = info?.status ?? .unknown
         message = info?.state?.message
-        since = info?.state?.lastChange
-        checkedAt = now
-        self.error = info == nil ? error ?? "no answer" : nil
+        since = Self.date(info?.state?.lastChange).flatMap { $0 <= now ? $0 : nil }
+        self.timing = timing
+        self.attemptedAt = attemptedAt
+        evaluatedAt = now
+        self.error = error ?? (info == nil ? "no answer" : nil)
         self.info = info
     }
 
     /// A directory entry carries the state the aggregator saw when it last reached the space.
     public init(_ entry: DirectoryEntry, now: Date = Date()) {
-        self.init(Target(entry), info: entry.info, now: entry.lastSeen ?? now)
+        self.init(entry, receivedAt: now, attemptedAt: now, now: now)
+    }
+
+    public init(_ entry: DirectoryEntry, receivedAt: Date?, maximumAge: TimeInterval = ObservationTiming.defaultMaximumAge,
+                error: String? = nil, attemptedAt: Date, now: Date = Date()) {
+        self.init(Target(entry), info: entry.info, timing: receivedAt.map {
+            ObservationTiming(source: .aggregator, observedAt: entry.lastSeen, receivedAt: $0,
+                maximumAge: maximumAge, sourceReachable: entry.reachable)
+        }, error: error, attemptedAt: attemptedAt, now: now)
+    }
+
+    public func evaluated(at date: Date) -> Snapshot {
+        var copy = self
+        copy.evaluatedAt = date
+        return copy
+    }
+
+    public func failedAttempt(at date: Date, error: String) -> Snapshot {
+        Snapshot(Target(endpoint: endpoint, name: name), info: info, timing: timing,
+                 error: error, attemptedAt: date, now: date)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(endpoint, forKey: .endpoint)
+        try values.encodeIfPresent(name, forKey: .name)
+        try values.encode(status, forKey: .status)
+        try values.encode(reportedStatus, forKey: .reportedStatus)
+        try values.encodeIfPresent(message, forKey: .message)
+        try values.encodeIfPresent(since, forKey: .since)
+        try values.encodeIfPresent(checkedAt, forKey: .checkedAt)
+        try values.encode(attemptedAt, forKey: .attemptedAt)
+        try values.encodeIfPresent(receivedAt, forKey: .receivedAt)
+        try values.encodeIfPresent(expiresAt, forKey: .expiresAt)
+        try values.encodeIfPresent(source?.rawValue, forKey: .source)
+        try values.encode(freshness.rawValue, forKey: .freshness)
+        try values.encodeIfPresent(error, forKey: .error)
     }
 
     public var failed: Bool { error != nil }
+
+    private static func date(_ date: Date?) -> Date? {
+        guard let date, date.timeIntervalSince1970.isFinite,
+              (0...253_402_300_799).contains(date.timeIntervalSince1970) else { return nil }
+        return date
+    }
 }
 
 /// Colors only when stdout is a terminal, honouring `NO_COLOR` and `TERM=dumb`.
@@ -73,24 +145,32 @@ public enum Output {
     public static func table(_ snapshots: [Snapshot], color: Bool, now: Date = Date()) -> String {
         let width = snapshots.map { label($0).count }.max() ?? 0
         return snapshots.map { snapshot in
-            let since = snapshot.since.map { "for \(elapsed(since: $0, now: now))" } ?? ""
-            let detail = snapshot.error.map { "unreachable: \($0)" } ?? snapshot.message ?? ""
+            let snapshot = snapshot.evaluated(at: now)
+            let since = snapshot.status == .unknown ? "" : snapshot.since.map { "for \(elapsed(since: $0, now: now))" } ?? ""
+            let detail = detail(snapshot)
             return trim([pad(label(snapshot), width), mark(snapshot.status, color: color), pad(since, 10), plain(detail)])
         }.joined(separator: "\n")
     }
 
     /// A watch line for a space whose state changed, prefixed with the local time.
     public static func change(_ snapshot: Snapshot, color: Bool, now: Date = Date()) -> String {
+        let snapshot = snapshot.evaluated(at: now)
         let time = now.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
-        let detail = snapshot.error.map { "unreachable: \($0)" } ?? snapshot.message ?? ""
+        let detail = detail(snapshot)
         return trim([time, label(snapshot), mark(snapshot.status, color: color), plain(detail)])
     }
 
     public static func search(_ entries: [DirectoryEntry], color: Bool) -> String {
-        let width = entries.map { plain($0.info.name).count }.max() ?? 0
-        return entries.map { entry in
-            let host = entry.endpoint.host ?? entry.endpoint.absoluteString
-            return trim([pad(plain(entry.info.name), width), mark(entry.info.status, color: color), dim(host, color)])
+        searchSnapshots(entries.map { Snapshot($0) }, color: color)
+    }
+
+    public static func searchSnapshots(_ snapshots: [Snapshot], color: Bool, now: Date = Date()) -> String {
+        let width = snapshots.map { label($0).count }.max() ?? 0
+        return snapshots.map { snapshot in
+            let snapshot = snapshot.evaluated(at: now)
+            let host = snapshot.endpoint.host ?? snapshot.endpoint.absoluteString
+            let age = snapshot.freshness == .current ? "" : detail(snapshot)
+            return trim([pad(label(snapshot), width), mark(snapshot.status, color: color), dim(host, color), plain(age)])
         }.joined(separator: "\n")
     }
 
@@ -99,14 +179,25 @@ public enum Output {
     }
 
     /// Waybar's `text`, `tooltip`, `class` and `alt` contract; the tooltip is Pango markup.
-    public static func waybar(_ snapshot: Snapshot) throws -> String {
-        let tooltip = plain(snapshot.message ?? snapshot.error ?? snapshot.endpoint.absoluteString)
+    public static func waybar(_ snapshot: Snapshot, now: Date = Date()) throws -> String {
+        let snapshot = snapshot.evaluated(at: now)
+        let text = detail(snapshot)
+        let tooltip = plain(text.isEmpty ? snapshot.endpoint.absoluteString : text)
             .replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
         return try json(Waybar(text: "\(label(snapshot)): \(snapshot.status.rawValue)", tooltip: tooltip,
                               class: snapshot.failed ? "error" : snapshot.status.rawValue,
                               alt: snapshot.status.rawValue))
+    }
+
+    private static func detail(_ snapshot: Snapshot) -> String {
+        if let error = snapshot.error { return "unreachable: \(error)" }
+        switch snapshot.freshness {
+        case .stale: return "stale observation; last known \(snapshot.reportedStatus.rawValue)"
+        case .unknown: return snapshot.info == nil ? "" : "no current observation; last known \(snapshot.reportedStatus.rawValue)"
+        case .current: return snapshot.message ?? ""
+        }
     }
 
     /// `-q`: 0 when every space is open, 2 when any state is unknown, 1 otherwise.

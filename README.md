@@ -2,6 +2,12 @@
 
 A command-line client for [SpaceAPI](https://spaceapi.io), built on the independently maintained [SpaceStateKit](https://github.com/kerker00/SpaceStateKit). Ask by name whether a space is open, see how to get in and reach it, save your spaces, follow them, or feed scripts and Waybar. No account is required.
 
+Status and observation meanings follow the [shared English/German terminology](https://github.com/kerker00/SpaceState/blob/dev/docs/TERMINOLOGY.md).
+CLI output stays English: `open`, `closed` and `unknown` are also stable JSON and
+Waybar values. The legacy JSON field `checkedAt` means the original observation;
+`attemptedAt` is the latest attempt. `keymasters` and the “Keymasters” heading
+retain the SpaceAPI collection name for keyholder contacts.
+
 ## Build and run
 
 Requires Swift 6.2+. The initial Linux CI target is Ubuntu 24.04 x86_64; macOS 26+ is also tested.

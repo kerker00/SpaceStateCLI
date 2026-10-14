@@ -57,9 +57,13 @@ struct DirectoryOptions: ParsableArguments {
 
     /// The default directory is cached for an hour; another one is always downloaded.
     func entries(fresh: Bool = false) async throws -> [DirectoryEntry] {
+        try await document(fresh: fresh).entries
+    }
+
+    func document(fresh: Bool = false) async throws -> DirectoryDocument {
         let url = try Resolver.webURL(directory)
         let isDefault = url == SpaceDirectory.aggregatorURL
-        return try await DirectoryLoader.load(
+        return try await DirectoryLoader.loadDocument(
             from: url, cache: isDefault ? Paths.directoryCache() : nil, maxAge: isDefault && !fresh ? 3600 : nil)
     }
 
@@ -116,16 +120,19 @@ func snapshots(_ targets: [Target]) async -> [Snapshot] {
     await withTaskGroup(of: (Int, Snapshot).self) { group in
         for (index, target) in targets.enumerated() {
             group.addTask {
+                let attemptedAt = Date()
                 do {
-                    return (index, Snapshot(target, info: try await StatusClient().space(at: target.endpoint)))
+                    let observation = try await StatusClient().spaceObservation(at: target.endpoint)
+                    return (index, Snapshot(target, observation: observation, attemptedAt: attemptedAt))
                 } catch {
-                    return (index, Snapshot(target, info: nil, error: String(describing: error)))
+                    return (index, Snapshot(target, info: nil, error: String(describing: error), now: attemptedAt))
                 }
             }
         }
         var results = [Snapshot?](repeating: nil, count: targets.count)
         for await (index, snapshot) in group { results[index] = snapshot }
-        return results.compactMap { $0 }
+        let date = Date()
+        return results.compactMap { $0?.evaluated(at: date) }
     }
 }
 
@@ -212,19 +219,19 @@ struct Search: AsyncParsableCommand {
     func run() async throws {
         let text = query.joined(separator: " ")
         let rank: [SpaceStatus: Int] = [.open: 0, .closed: 1, .unknown: 2]
-        let matches = try await lookup.entries(fresh: true)
+        let matches = try await lookup.document(fresh: true).snapshots()
             .filter {
-                $0.info.name.localizedCaseInsensitiveContains(text)
-                    || ($0.info.location?.address?.localizedCaseInsensitiveContains(text) ?? false)
+                ($0.name?.localizedCaseInsensitiveContains(text) ?? false)
+                    || ($0.info?.location?.address?.localizedCaseInsensitiveContains(text) ?? false)
             }
-            .filter { !open || $0.info.status == .open }
-            .sorted { (rank[$0.info.status]!, $0.info.name.lowercased()) < (rank[$1.info.status]!, $1.info.name.lowercased()) }
+            .filter { !open || $0.status == .open }
+            .sorted { (rank[$0.status]!, ($0.name ?? "").lowercased()) < (rank[$1.status]!, ($1.name ?? "").lowercased()) }
         if json {
-            try write(Output.searchJSON(matches))
+            try write(Output.json(matches))
         } else if matches.isEmpty {
             try write("No \(open ? "open " : "")space matches \"\(text)\".", to: .standardError)
         } else {
-            try write(Output.search(matches, color: terminalSupportsColor()))
+            try write(Output.searchSnapshots(matches, color: terminalSupportsColor()))
         }
     }
 }
@@ -232,7 +239,7 @@ struct Search: AsyncParsableCommand {
 struct Watch: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Keep checking spaces and report when they open or close.",
-        discussion: "Prints the current state, then a line with the time whenever a space opens, closes or becomes unreachable. Stop with Ctrl+C.")
+        discussion: "Prints the current state, then changes and observation expiry. Expiry updates do not perform or count as network checks. Stop with Ctrl+C.")
 
     @Argument(help: "Space names or endpoint URLs. Defaults to your saved spaces.")
     var spaces: [String] = []
@@ -243,7 +250,7 @@ struct Watch: AsyncParsableCommand {
     @Option(name: [.customShort("n", allowingJoined: true), .long], help: ArgumentHelp("Stop after this many checks.", valueName: "checks"))
     var count: Int?
 
-    @Flag(name: .shortAndLong, help: "Print one JSON object per space on every check, one per line.")
+    @Flag(name: .shortAndLong, help: "Print one JSON object per space on every check and changed expiry, one per line.")
     var json = false
 
     @Flag(help: "Print Waybar JSON for a single space on every check.")
@@ -263,25 +270,23 @@ struct Watch: AsyncParsableCommand {
         guard !targets.isEmpty else { throw usageFailure(noSavedSpaces) }
         if waybar && targets.count != 1 { throw usageFailure("--waybar shows a single space; give exactly one.") }
         let color = terminalSupportsColor()
-        var previous: [URL: (SpaceStatus, Bool)] = [:]
-        var checks = 0
-        while true {
-            let results = await snapshots(targets)
+        var previous: [URL: Snapshot] = [:]
+        func emit(_ results: [Snapshot], initial: Bool) throws {
             if json {
                 for snapshot in results { try write(Output.json(snapshot)) }
             } else if waybar {
-                try write(Output.waybar(results[0]))
-            } else if checks == 0 {
+                if let snapshot = results.first { try write(Output.waybar(snapshot)) }
+            } else if initial {
                 try write(Output.table(results, color: color))
             } else {
-                for snapshot in results where previous[snapshot.endpoint].map({ $0 != (snapshot.status, snapshot.failed) }) ?? true {
+                for snapshot in results where previous[snapshot.endpoint].map({ WatchState.changed($0, snapshot) }) ?? true {
                     try write(Output.change(snapshot, color: color))
                 }
             }
-            for snapshot in results { previous[snapshot.endpoint] = (snapshot.status, snapshot.failed) }
-            checks += 1
-            if let count, checks >= count { return }
-            try await Task.sleep(for: .seconds(seconds))
+        }
+        try await WatchLoop.run(interval: seconds, count: count, fetch: { await snapshots(targets) }) { results, initial in
+            try emit(results, initial: initial)
+            for snapshot in results { previous[snapshot.endpoint] = snapshot }
         }
     }
 }

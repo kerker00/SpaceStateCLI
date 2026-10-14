@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import SpaceAPI
 
 /// Where the optional config and the directory cache live, following the XDG base directories.
@@ -90,27 +93,84 @@ public struct SavedSpaces: Sendable {
 }
 
 /// Loads the SpaceAPI directory, keeping a copy so names resolve without a 300 KB download each time.
+public struct DirectoryDocument: Sendable {
+    public let entries: [DirectoryEntry]
+    public let receivedAt: Date?
+    public let attemptedAt: Date
+    public let maximumObservationAge: TimeInterval
+    public let error: String?
+
+    public func snapshots(at date: Date = Date()) -> [Snapshot] {
+        entries.map { Snapshot($0, receivedAt: receivedAt, maximumAge: maximumObservationAge,
+            error: error, attemptedAt: attemptedAt, now: date) }
+    }
+}
+
 public enum DirectoryLoader {
     /// - Parameter maxAge: How old the cached copy may be; `nil` always downloads, without falling back to the cache.
     public static func load(
         from url: URL, cache: URL?, maxAge: TimeInterval?, client: StatusClient = StatusClient(), now: Date = Date()
     ) async throws -> [DirectoryEntry] {
+        try await document(from: url, cache: cache, maxAge: maxAge, now: { now }) {
+            let data = try await client.data(from: url, maximumBytes: StatusClient.maxDirectoryResponseBytes)
+            return (data, ObservationTiming.defaultMaximumAge)
+        }.entries
+    }
+
+    /// The original successful download and each entry's lastSeen survive cache
+    /// reuse. A failed refresh may supply names, but never a current opening flag.
+    public static func loadDocument(from url: URL, cache: URL?, maxAge: TimeInterval?,
+                                    now: @escaping @Sendable () -> Date = { Date() }, load: StatusClient.Loader? = nil) async throws -> DirectoryDocument {
+        try await document(from: url, cache: cache, maxAge: maxAge, now: now) {
+            var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            let (data, response): (Data, URLResponse)
+            if let load { (data, response) = try await load(request) }
+            else { (data, response) = try await StatusClient.limitedLoad(request, maximumBytes: StatusClient.maxDirectoryResponseBytes) }
+            guard data.count <= StatusClient.maxDirectoryResponseBytes else { throw StatusClientError.responseTooLarge }
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                throw StatusClientError.httpStatus(http.statusCode)
+            }
+            var age = ObservationTiming.defaultMaximumAge
+            if let field = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-SpacePush-Max-Data-Age") {
+                let text = field.trimmingCharacters(in: .whitespaces)
+                if !text.isEmpty, text.utf8.allSatisfy({ (48...57).contains($0) }), let seconds = Int64(text), seconds > 0 {
+                    age = TimeInterval(seconds)
+                } else { age = 0 }
+            }
+            return (data, age)
+        }
+    }
+
+    private static func document(from url: URL, cache: URL?, maxAge: TimeInterval?, now: @Sendable () -> Date,
+                                 read: () async throws -> (Data, TimeInterval)) async throws -> DirectoryDocument {
         try Resolver.validateEndpoint(url)
-        if let cache, let maxAge, let modified = modificationDate(cache), now.timeIntervalSince(modified) < maxAge,
-           let entries = cached(cache) {
-            return entries
+        try Task.checkCancellation()
+        let attemptedAt = now()
+        if let cache, let maxAge, let stored = cached(cache, source: url), let receivedAt = stored.receivedAt,
+           receivedAt <= attemptedAt, attemptedAt.timeIntervalSince(receivedAt) < maxAge {
+            return stored.document(attemptedAt: attemptedAt)
         }
         do {
-            let data = try await client.data(from: url, maximumBytes: StatusClient.maxDirectoryResponseBytes)
+            let (data, age) = try await read()
             let entries = try SpaceDirectory.decode(data)
+            try Task.checkCancellation()
+            let receivedAt = now()
             if let cache {
                 try? FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try? data.write(to: cache, options: .atomic)
+                let stored = CacheEnvelope(version: 1, source: url, receivedAt: receivedAt, maximumObservationAge: age, body: data)
+                if let encoded = try? JSONEncoder().encode(stored) { try? encoded.write(to: cache, options: .atomic) }
             }
-            return entries
+            return DirectoryDocument(entries: entries, receivedAt: receivedAt, attemptedAt: attemptedAt,
+                                     maximumObservationAge: age, error: nil)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             // A stale list still resolves names; the states are fetched from each space anyway.
-            if maxAge != nil, let cache, let entries = cached(cache) { return entries }
+            try Task.checkCancellation()
+            if maxAge != nil, let cache, let stored = cached(cache, source: url) {
+                return stored.document(attemptedAt: attemptedAt, error: "directory unavailable; showing cached names")
+            }
             throw error
         }
     }
@@ -119,7 +179,41 @@ public enum DirectoryLoader {
         (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
     }
 
-    private static func cached(_ file: URL) -> [DirectoryEntry]? {
-        (try? Data(contentsOf: file)).flatMap { try? SpaceDirectory.decode($0) }
+    private struct CacheEnvelope: Codable {
+        let version: Int
+        let source: URL
+        let receivedAt: Date
+        let maximumObservationAge: TimeInterval
+        let body: Data
+    }
+
+    private struct CachedDirectory {
+        let entries: [DirectoryEntry]
+        let receivedAt: Date?
+        let maximumObservationAge: TimeInterval
+        func document(attemptedAt: Date, error: String? = nil) -> DirectoryDocument {
+            DirectoryDocument(entries: entries, receivedAt: receivedAt, attemptedAt: attemptedAt,
+                              maximumObservationAge: maximumObservationAge, error: error)
+        }
+    }
+
+    private static func cached(_ file: URL, source: URL) -> CachedDirectory? {
+        let size = (try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? NSNumber
+        // A bounded raw body expands as base64 in the versioned cache envelope.
+        guard let size, size.intValue <= StatusClient.maxDirectoryResponseBytes * 2,
+              let data = try? Data(contentsOf: file) else { return nil }
+        if let stored = try? JSONDecoder().decode(CacheEnvelope.self, from: data) {
+            guard stored.version == 1, stored.source == source,
+                  stored.body.count <= StatusClient.maxDirectoryResponseBytes,
+                  let entries = try? SpaceDirectory.decode(stored.body) else { return nil }
+            return CachedDirectory(entries: entries, receivedAt: stored.receivedAt,
+                                   maximumObservationAge: stored.maximumObservationAge)
+        }
+        // Older raw-array caches retain their file time and original lastSeen;
+        // reading or touching a new envelope never resets its stored receipt.
+        guard data.count <= StatusClient.maxDirectoryResponseBytes,
+              let entries = try? SpaceDirectory.decode(data) else { return nil }
+        return CachedDirectory(entries: entries, receivedAt: modificationDate(file),
+                               maximumObservationAge: ObservationTiming.defaultMaximumAge)
     }
 }

@@ -177,7 +177,7 @@ struct Show: AsyncParsableCommand {
 
 struct Info: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Show available details: address, access hint, contacts, feeds and links.")
+        abstract: "Show available details: address, access hint, contacts, feeds, links and sensors.")
 
     @Argument(help: "Space names or endpoint URLs. Defaults to your saved spaces.")
     var spaces: [String] = []
@@ -238,8 +238,8 @@ struct Search: AsyncParsableCommand {
 
 struct Watch: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Keep checking spaces and report when they open or close.",
-        discussion: "Prints the current state, then changes and observation expiry. Expiry updates do not perform or count as network checks. Stop with Ctrl+C.")
+        abstract: "Keep checking spaces and report state or sensor changes.",
+        discussion: "Prints the current state and compact sensors, then changes and observation expiry. Expiry updates do not perform or count as network checks. Stop with Ctrl+C.")
 
     @Argument(help: "Space names or endpoint URLs. Defaults to your saved spaces.")
     var spaces: [String] = []

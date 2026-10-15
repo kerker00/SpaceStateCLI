@@ -102,6 +102,32 @@ A space is a name or a SpaceAPI endpoint URL. Names come from the [SpaceAPI dire
 
 `info` shows fields decoded by SpaceStateKit. Text output lists keymasters by name or IRC nickname; `info --json` also includes their contact details.
 
+### Sensors (unreleased)
+
+The current source uses the published Kit 0.3.3 sensor models. `info` lists all
+typed readings with their units, location, sensor name, description and reported
+value-change time. Empty groups are omitted. Other sensor kinds, including compound
+wind/radiation data, are labelled `uninterpreted` and printed as JSON; they are not
+automatically treated as validated measurements. Visitor-name and connected-machine
+lists are not carried by the typed Kit readings.
+
+`show`, text `watch` and the Waybar tooltip add a compact summary: one visitor
+counter, temperature, humidity and CO₂ reading, in that order. The first published
+reading of each kind is used; the visitor summary uses the first nonnegative whole
+count. Published location or sensor name identifies the reading. Multiple visitor
+counters are never added together. Missing units stay absent, and values are not
+converted between units. `info` shows the full set of readings instead of repeating
+the compact summary.
+
+Compact values appear only when document observation timing is current and the
+read has not failed. On errors, stale or unproven observations, `info` retains
+readings in an explicit `last known` section and JSON keeps them with the root
+`freshness`, `error` and original timing fields. A sensor's change time is not
+evidence of a new measurement and cannot refresh those times. Text watch emits
+when a displayed sensor summary changes, even if the opening state stays the same;
+changes to unshown sensors or only their change times do not repeat compact lines.
+JSON and Waybar continue reporting every polling check, plus expiry transitions.
+
 `spacestate --help` and `spacestate help <command>` describe every option.
 
 ### Saved spaces
@@ -135,6 +161,19 @@ Exit codes otherwise: 0 success, 1 network/data/output failure (including a spac
 - `since`: when the space says its state last changed; this does not prove freshness. `checkedAt` is now only a usable original successful observation: direct receipt, or directory `lastSeen`. It is absent when the source time is missing, invalid or future, and on a first failed read. It is never replaced with the client's current time to fill missing evidence.
 - `attemptedAt`: the client check/attempt, including an unsuccessful read or cache lookup. `receivedAt`: successful client receipt, retained from a cached directory or earlier successful watch read. `expiresAt`: the conservative observation limit; reevaluating a retained snapshot changes status/freshness without changing these times.
 - `source` identifies the direct or aggregator read path. Optional values are omitted when absent or unusable. Dates use ISO 8601 UTC.
+- `sensors` is optional and has the same shape in `show`, `search`, `watch` and
+  `info`. Typed arrays use SpaceAPI kind keys: `temperature`, `humidity`,
+  `carbondioxide`, `barometer`, `door_locked`, `people_now_present`,
+  `total_member_count`, `network_connections`, `beverage_supply`,
+  `power_consumption` and `power_generation`. Each entry has `value` and optional
+  `unit`, `location`, `name`, `description`, `lastChange`. The last field is an
+  ISO 8601 value-change timestamp; absent or nonportable times are omitted rather
+  than replaced with client time. Numeric values stay numbers and door values stay
+  booleans. Nonfinite typed numeric readings are omitted. Other sensor kinds are
+  retained as untyped JSON under `sensors.other`; manually supplied nonfinite raw
+  numbers become null. Empty typed arrays and an entirely absent sensor block are
+  omitted. A retained block is historical when root freshness is not current or
+  `error` is present. Quiet exit codes still depend on the opening state alone.
 
 This is an unreleased JSON-contract change: consumers that assumed `checkedAt`
 always existed must handle its absence and use `attemptedAt` for attempts.
@@ -183,7 +222,7 @@ This is a persistent polling process (every 60 s; change it with `-i`). Do not a
 
 In the local multi-repository SpaceState workspace, the shared roadmap is `../Plan.md`. It is a workspace file, not part of this public repository.
 
-The normal build pins SpaceStateKit to `0.3.2`. To work on sibling checkouts:
+The normal build pins SpaceStateKit to `0.3.3`. To work on sibling checkouts:
 
 ```sh
 SPACESTATEKIT_PATH=../SpaceStateKit swift test

@@ -100,7 +100,8 @@ public struct Profile: Encodable, Sendable {
 
     /// The status line, then one labelled block per part the space publishes.
     public func text(color: Bool, now: Date = Date()) -> String {
-        var lines = [Output.table([snapshot], color: color, now: now)]
+        let snapshot = snapshot.evaluated(at: now)
+        var lines = [Output.table([snapshot], color: color, now: now, includeSensors: false)]
         func add(_ label: String, _ values: [String]) {
             for (index, value) in values.enumerated() {
                 let title = index == 0 ? label : ""
@@ -122,6 +123,19 @@ public struct Profile: Encodable, Sendable {
         add("Links", Self.pairs((links ?? []).map { ($0.name, $0.url.absoluteString) }))
         add("Projects", (projects ?? []).map(\.absoluteString))
         add("Linked", (linkedSpaces ?? []).compactMap { ($0.website ?? $0.endpoint)?.absoluteString })
+        if let sensors = snapshot.sensors {
+            let reason: String?
+            if snapshot.failed {
+                reason = "read failed"
+            } else {
+                reason = switch snapshot.freshness {
+                case .current: nil
+                case .stale: "stale observation"
+                case .unknown: "no current observation"
+                }
+            }
+            add("Sensors", (reason.map { ["last known; \($0)"] } ?? []) + sensors.lines)
+        }
         add("Endpoint", [snapshot.endpoint.absoluteString])
         return lines.joined(separator: "\n")
     }

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Adopt exact published Kit 0.3.3 for sensor models, including the resolved commit
+  in Package.resolved. ArgumentParser remains at 1.8.2.
+- Add full sensor readings and metadata to `info` text, with the same optional
+  sensor JSON block in show/search/watch/info. Preserve untyped sensor JSON as
+  explicitly uninterpreted data. Retained values keep original change/observation
+  times and are labelled historical after failures or expiry.
+- Add compact visitors/temperature/humidity/CO₂ to current show/watch text and
+  Waybar tooltips, without unit inference, visitor-counter summing or visitor names.
+  Text watch detects changes in displayed sensor values even without an opening
+  transition. Keep opening-state exit codes and existing no-sensor output.
 - Adopt exact Kit 0.3.2 observation APIs. Separate original observation, receipt,
   attempt and expiry; stale or unproven data provides unknown current status in
   text, JSON, quiet mode, search filtering and Waybar. Invalid optional times are omitted.

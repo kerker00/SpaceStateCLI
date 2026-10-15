@@ -25,6 +25,7 @@ public struct WatchState: Sendable {
 
     public static func changed(_ before: Snapshot, _ after: Snapshot) -> Bool {
         before.status != after.status || before.freshness != after.freshness || before.failed != after.failed
+            || before.sensorSummary != after.sensorSummary
     }
 }
 

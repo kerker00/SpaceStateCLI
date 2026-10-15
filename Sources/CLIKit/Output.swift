@@ -33,12 +33,13 @@ public struct Snapshot: Encodable, Sendable {
     public let error: String?
     /// The whole document, for `info`; not part of the JSON.
     public let info: SpaceInfo?
+    public let sensors: SensorOutput?
     private let timing: ObservationTiming?
     private var evaluatedAt: Date
     var evaluationDate: Date { evaluatedAt }
 
     private enum CodingKeys: String, CodingKey {
-        case endpoint, name, status, reportedStatus, message, since, checkedAt, attemptedAt, receivedAt, expiresAt, source, freshness, error
+        case endpoint, name, status, reportedStatus, message, since, checkedAt, attemptedAt, receivedAt, expiresAt, source, freshness, error, sensors
     }
 
     /// Falls back to the target's known name when the space cannot be reached.
@@ -64,6 +65,7 @@ public struct Snapshot: Encodable, Sendable {
         evaluatedAt = now
         self.error = error ?? (info == nil ? "no answer" : nil)
         self.info = info
+        sensors = info.flatMap { SensorOutput($0.sensors) }
     }
 
     /// A directory entry carries the state the aggregator saw when it last reached the space.
@@ -105,9 +107,14 @@ public struct Snapshot: Encodable, Sendable {
         try values.encodeIfPresent(source?.rawValue, forKey: .source)
         try values.encode(freshness.rawValue, forKey: .freshness)
         try values.encodeIfPresent(error, forKey: .error)
+        try values.encodeIfPresent(sensors, forKey: .sensors)
     }
 
     public var failed: Bool { error != nil }
+
+    var sensorSummary: String? {
+        error == nil && freshness == .current ? sensors?.compact : nil
+    }
 
     private static func date(_ date: Date?) -> Date? {
         guard let date, date.timeIntervalSince1970.isFinite,
@@ -141,13 +148,13 @@ public enum Output {
         String(value.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : String($0) }.joined())
     }
 
-    /// One aligned line per space: name, state, how long it has been in that state, and its message or error.
-    public static func table(_ snapshots: [Snapshot], color: Bool, now: Date = Date()) -> String {
+    /// One aligned line per space: name, state, duration, message/error and current compact sensors.
+    public static func table(_ snapshots: [Snapshot], color: Bool, now: Date = Date(), includeSensors: Bool = true) -> String {
         let width = snapshots.map { label($0).count }.max() ?? 0
         return snapshots.map { snapshot in
             let snapshot = snapshot.evaluated(at: now)
             let since = snapshot.status == .unknown ? "" : snapshot.since.map { "for \(elapsed(since: $0, now: now))" } ?? ""
-            let detail = detail(snapshot)
+            let detail = detail(snapshot, includeSensors: includeSensors)
             return trim([pad(label(snapshot), width), mark(snapshot.status, color: color), pad(since, 10), plain(detail)])
         }.joined(separator: "\n")
     }
@@ -191,12 +198,14 @@ public enum Output {
                               alt: snapshot.status.rawValue))
     }
 
-    private static func detail(_ snapshot: Snapshot) -> String {
+    private static func detail(_ snapshot: Snapshot, includeSensors: Bool = true) -> String {
         if let error = snapshot.error { return "unreachable: \(error)" }
         switch snapshot.freshness {
         case .stale: return "stale observation; last known \(snapshot.reportedStatus.rawValue)"
         case .unknown: return snapshot.info == nil ? "" : "no current observation; last known \(snapshot.reportedStatus.rawValue)"
-        case .current: return snapshot.message ?? ""
+        case .current:
+            return [snapshot.message, includeSensors ? snapshot.sensorSummary : nil]
+                .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
         }
     }
 

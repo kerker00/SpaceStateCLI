@@ -10,10 +10,31 @@ request_lock = threading.Lock()
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args): pass
     def do_GET(self):
-        with request_lock: requests.append(self.path)
+        with request_lock:
+            requests.append(self.path)
+            sensor_round = requests.count('/sensor-changing')
         info={'space':'Test Space','state':{'open':True,'message':'<Guests welcome>'},'location':{'address':'Street 1','country_code':'DE','hint':'Ring twice'},'contact':{'email':'hi@example.org'}}
         lab={'space':'Test Lab','state':{'open':False}}
         body = json.dumps([{'url':base+'/ok','lastSeen':time.time(),'data':info},{'url':base+'/error','lastSeen':time.time(),'data':lab}]) if self.path=='/directory' else json.dumps(info)
+        sensor_info = {**info, 'space':'Sensor Space', 'sensors':{
+            'temperature':[{'value':21.5,'unit':'°C','location':'<Lab>&','name':'Desk',
+                            'description':'Inside','lastchange':100}, {'value':'warm'}],
+            'humidity':[{'value':50,'unit':'%'}],
+            'carbondioxide':[{'value':600,'unit':'ppm'}],
+            'people_now_present':[{'value':3 + sensor_round,'names':['Hidden person']}],
+            'network_connections':[{'value':2,'machines':[{'name':'Hidden machine'}]}],
+            'door_locked':[{'value':False}],
+            'ext_light':[{'value':200,'unit':'lux','note':'Line\n<extra>'}],
+            'wind':[{'properties':{'speed':{'value':5,'unit':'m/s'}}}],
+        }}
+        if self.path in ['/sensors','/sensor-changing']:
+            body = json.dumps(sensor_info)
+        if self.path == '/sensor-directory':
+            body = json.dumps([
+                {'url':base+'/sensors','lastSeen':time.time()-5,'data':sensor_info},
+                {'url':base+'/sensor-old','lastSeen':time.time()-901,
+                 'data':{**sensor_info,'space':'Sensor Old'}},
+            ])
         if self.path == '/mixed-directory':
             body = json.dumps([{'url':base+'/ok','data':info}] + [
                 {'url':url,'data':{'space':'Test Invalid'}} for url in [
@@ -125,5 +146,36 @@ try:
     assert waybar['class']=='open' and waybar['tooltip']=='&lt;Guests welcome&gt;'
     run('watch','--waybar','-n1',base+'/ok',base+'/error',code=64)
     run('watch','-i','2s',code=64)
-    print('CLI observation freshness, source times, directory policy/cache names, endpoint validation, HTTP, saved spaces, JSON, watch, Waybar and exit-code checks passed')
+    [sensor_status] = json.loads(run('show',base+'/sensors','--json').stdout)
+    [sensor_profile] = json.loads(run('info',base+'/sensors','--json').stdout)
+    payload = sensor_status['sensors']
+    assert payload == sensor_profile['sensors']
+    assert payload['temperature'] == [{'value':21.5,'unit':'°C','location':'<Lab>&',
+                                      'name':'Desk','description':'Inside','lastChange':'1970-01-01T00:01:40Z'}]
+    assert payload['door_locked'][0]['value'] is False
+    assert payload['people_now_present'][0]['value'] == 3
+    assert 'names' not in payload['people_now_present'][0]
+    assert 'machines' not in payload['network_connections'][0]
+    assert payload['other']['wind'][0]['properties']['speed']['value'] == 5
+    assert payload['other']['ext_light'][0]['note'] == 'Line\n<extra>'
+    sensor_text = run('show',base+'/sensors').stdout
+    assert 'visitors 3' in sensor_text and 'temp 21.5 °C (<Lab>&)' in sensor_text
+    assert len(sensor_text.splitlines()) == 1
+    sensor_details = run('info',base+'/sensors').stdout
+    assert 'Temperature  21.5 °C' in sensor_details and 'changed: 1970-01-01T00:01:40Z' in sensor_details
+    assert 'Other wind (uninterpreted)' in sensor_details
+    assert 'Hidden person' not in sensor_details and 'Hidden machine' not in sensor_details
+    sensor_search = json.loads(run('search','sensor','--json','--directory',base+'/sensor-directory').stdout)
+    by_name = {entry['name']:entry for entry in sensor_search}
+    assert by_name['Sensor Space']['sensors'] == payload
+    assert by_name['Sensor Old']['freshness'] == 'stale' and by_name['Sensor Old']['status'] == 'unknown'
+    assert by_name['Sensor Old']['sensors'] == payload
+    sensor_waybar = json.loads(run('watch',base+'/sensors','--waybar','-n1').stdout)
+    assert 'temp 21.5 °C (&lt;Lab&gt;&amp;)' in sensor_waybar['tooltip']
+    [sensor_watch] = run('watch',base+'/sensors','--json','-n1').stdout.splitlines()
+    assert json.loads(sensor_watch)['sensors'] == payload
+    changes = run('watch',base+'/sensor-changing','-n2','-i5s').stdout.splitlines()
+    assert len(changes) == 2 and 'visitors 4' in changes[0] and 'visitors 5' in changes[1], changes
+    run('show',base+'/sensors','-q')
+    print('CLI sensor text/JSON/metadata/history/watch/Waybar, observation freshness, source times, directory policy/cache names, endpoint validation, HTTP, saved spaces and exit-code checks passed')
 finally: server.shutdown(); server.server_close(); home.cleanup()

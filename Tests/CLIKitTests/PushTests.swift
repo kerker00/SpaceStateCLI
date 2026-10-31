@@ -2,6 +2,7 @@ import Foundation
 import Synchronization
 import Testing
 import SpaceAPI
+import SpacePushClient
 @testable import CLIKit
 
 struct PushWatchTests {
@@ -51,5 +52,33 @@ struct PushWatchTests {
         let waiting = Task { try await wake.wait(.seconds(60)) }
         waiting.cancel()
         await #expect(throws: CancellationError.self) { try await waiting.value }
+    }
+}
+
+struct DesktopNotificationTests {
+    private func change(_ kind: StateChange.Kind, to: String?) -> StateChange {
+        StateChange(kind: kind, endpoint: URL(string: "https://a.example/")!, room: "space", name: "A\u{1B}[31m",
+                    from: to == nil ? nil : "closed", to: to, at: Date(timeIntervalSince1970: 0))
+    }
+
+    @Test func describesChangesAndTests() {
+        #expect(DesktopNotification.text(change(.change, to: "open")) == ("A [31m", "Open"))
+        #expect(DesktopNotification.text(change(.change, to: "keyholder")).body == "Keyholder present")
+        #expect(DesktopNotification.text(change(.test, to: nil)).body.hasPrefix("Test notification"))
+        #expect(DesktopNotification.description("future_state") == "future_state")
+    }
+
+    @Test func buildsNotifySendArguments() {
+        #expect(DesktopNotification.arguments(summary: "-A", body: "Open", replacing: nil)
+            == ["--app-name=SpaceState", "--print-id", "--", "-A", "Open"])
+        #expect(DesktopNotification.arguments(summary: "A", body: "Closed", replacing: 42)
+            == ["--app-name=SpaceState", "--print-id", "--replace-id=42", "--", "A", "Closed"])
+        #expect(DesktopNotification.id(fromOutput: "17\n") == 17)
+        #expect(DesktopNotification.id(fromOutput: "") == nil)
+    }
+
+    @Test func subscribesToTheSpaceItself() {
+        let target = Target(endpoint: URL(string: "https://a.example/")!, name: "A")
+        #expect(DesktopNotification.subscriptions([target]) == [PushSubscription(endpoint: target.endpoint)])
     }
 }

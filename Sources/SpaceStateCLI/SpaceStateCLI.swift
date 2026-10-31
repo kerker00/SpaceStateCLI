@@ -3,6 +3,7 @@ import CLIKit
 import Foundation
 import SpaceAPI
 import SpacePushClient
+import Synchronization
 #if canImport(Glibc)
 import Glibc
 #else
@@ -45,10 +46,11 @@ struct SpaceState: AsyncParsableCommand {
           spacestate add mainframe        Save it, then just run `spacestate`
           spacestate watch -i 5m          Follow your saved spaces
           spacestate watch --push         Follow them with SpacePush's change stream
+          spacestate notify               Desktop notifications when they open or close
           spacestate -q mainframe && echo open
         """,
         version: CLI.version,
-        subcommands: [Show.self, Info.self, Search.self, Watch.self, Add.self, Remove.self],
+        subcommands: [Show.self, Info.self, Search.self, Watch.self, Notify.self, Add.self, Remove.self],
         defaultSubcommand: Show.self
     )
 }
@@ -346,6 +348,74 @@ struct PushServerOptions: ParsableArguments {
         } catch {
             try? write("Change stream unavailable: \(Output.plain(String(describing: error))).", to: .standardError)
         }
+    }
+}
+
+struct Notify: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Show desktop notifications when spaces open or close.",
+        discussion: """
+        Follows SpacePush's change stream and shows each confirmed change through notify-send \
+        (libnotify 0.8 or later), replacing the space's previous notification. Runs until stopped; \
+        a systemd user unit is in contrib/. Connection problems are reported on stderr.
+        """)
+
+    @Argument(help: "Space names or endpoint URLs. Defaults to your saved spaces.")
+    var spaces: [String] = []
+
+    @OptionGroup var server: PushServerOptions
+
+    @OptionGroup var lookup: DirectoryOptions
+
+    func run() async throws {
+        let targets = try await lookup.targets(spaces)
+        guard !targets.isEmpty else { throw usageFailure(noSavedSpaces) }
+        guard let notifySend = executable("notify-send") else {
+            throw usageFailure("notify-send was not found. Install libnotify.")
+        }
+        let shown = NotificationIDs()
+        try write("Following \(targets.count) space\(targets.count == 1 ? "" : "s") through \(server.url).", to: .standardError)
+        await server.follow(targets) { event in
+            guard case .change(let change) = event else { return }
+            let text = DesktopNotification.text(change)
+            let key = "\(change.endpoint.absoluteString)|\(change.room)"
+            let arguments = DesktopNotification.arguments(summary: text.summary, body: text.body, replacing: shown[key])
+            if let id = showNotification(notifySend, arguments) { shown[key] = id }
+        }
+        throw ExitCode.failure
+    }
+}
+
+/// Notification ids per topic, so a newer state replaces the older notification.
+final class NotificationIDs: Sendable {
+    private let ids = Mutex<[String: UInt32]>([:])
+    subscript(key: String) -> UInt32? {
+        get { ids.withLock { $0[key] } }
+        set { ids.withLock { $0[key] = newValue } }
+    }
+}
+
+func executable(_ name: String) -> URL? {
+    let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":")
+    return paths.map { URL(fileURLWithPath: String($0)).appending(component: name) }
+        .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+}
+
+/// Runs a notification helper and returns the id it printed.
+func showNotification(_ executable: URL, _ arguments: [String]) -> UInt32? {
+    let process = Process()
+    let output = Pipe()
+    process.executableURL = executable
+    process.arguments = arguments
+    process.standardOutput = output
+    do {
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return DesktopNotification.id(fromOutput: String(decoding: data, as: UTF8.self))
+    } catch {
+        try? write("notify-send failed: \(error)", to: .standardError)
+        return nil
     }
 }
 

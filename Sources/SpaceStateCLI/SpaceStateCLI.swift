@@ -2,6 +2,8 @@ import ArgumentParser
 import CLIKit
 import Foundation
 import SpaceAPI
+import SpacePushClient
+import Synchronization
 #if canImport(Glibc)
 import Glibc
 #else
@@ -43,10 +45,12 @@ struct SpaceState: AsyncParsableCommand {
           spacestate search berlin        Find spaces
           spacestate add mainframe        Save it, then just run `spacestate`
           spacestate watch -i 5m          Follow your saved spaces
+          spacestate watch --push         Follow them with SpacePush's change stream
+          spacestate notify               Desktop notifications when they open or close
           spacestate -q mainframe && echo open
         """,
         version: CLI.version,
-        subcommands: [Show.self, Info.self, Search.self, Watch.self, Add.self, Remove.self],
+        subcommands: [Show.self, Info.self, Search.self, Watch.self, Notify.self, Add.self, Remove.self],
         defaultSubcommand: Show.self
     )
 }
@@ -239,13 +243,17 @@ struct Search: AsyncParsableCommand {
 struct Watch: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Keep checking spaces and report state or sensor changes.",
-        discussion: "Prints the current state and compact sensors, then changes and observation expiry. Expiry updates do not perform or count as network checks. Stop with Ctrl+C.")
+        discussion: """
+        Prints the current state and compact sensors, then changes and observation expiry. Expiry updates do \
+        not perform or count as network checks. With --push, SpacePush's change stream triggers a check as soon \
+        as a space opens or closes, and regular checks continue as a fallback. Stop with Ctrl+C.
+        """)
 
     @Argument(help: "Space names or endpoint URLs. Defaults to your saved spaces.")
     var spaces: [String] = []
 
-    @Option(name: [.customShort("i", allowingJoined: true), .long], help: ArgumentHelp("Time between checks, such as 30s, 5m or 1h (5s to 24h).", valueName: "time"))
-    var interval = "60s"
+    @Option(name: [.customShort("i", allowingJoined: true), .long], help: ArgumentHelp("Time between checks, such as 30s, 5m or 1h (5s to 24h). Default: 60s, or 15m with --push.", valueName: "time"))
+    var interval: String?
 
     @Option(name: [.customShort("n", allowingJoined: true), .long], help: ArgumentHelp("Stop after this many checks.", valueName: "checks"))
     var count: Int?
@@ -256,16 +264,23 @@ struct Watch: AsyncParsableCommand {
     @Flag(help: "Print Waybar JSON for a single space on every check.")
     var waybar = false
 
+    @Flag(help: "Check as soon as SpacePush reports a change.")
+    var push = false
+
+    @OptionGroup var server: PushServerOptions
+
     @OptionGroup var lookup: DirectoryOptions
 
+    private var checkInterval: String { interval ?? (push ? "15m" : "60s") }
+
     func validate() throws {
-        do { _ = try pollInterval(interval) } catch let error as UsageError { throw ValidationError(error.description) }
+        do { _ = try pollInterval(checkInterval) } catch let error as UsageError { throw ValidationError(error.description) }
         if let count, count < 1 { throw ValidationError("--count must be at least 1.") }
         if json && waybar { throw ValidationError("--json and --waybar cannot be combined.") }
     }
 
     func run() async throws {
-        let seconds = try pollInterval(interval)
+        let seconds = try pollInterval(checkInterval)
         let targets = try await lookup.targets(spaces)
         guard !targets.isEmpty else { throw usageFailure(noSavedSpaces) }
         if waybar && targets.count != 1 { throw usageFailure("--waybar shows a single space; give exactly one.") }
@@ -284,10 +299,123 @@ struct Watch: AsyncParsableCommand {
                 }
             }
         }
-        try await WatchLoop.run(interval: seconds, count: count, fetch: { await snapshots(targets) }) { results, initial in
-            try emit(results, initial: initial)
-            for snapshot in results { previous[snapshot.endpoint] = snapshot }
+        let wake = PushWake()
+        let feed = push ? Task { await server.follow(targets) { _ in wake.signal() } } : nil
+        do {
+            try await WatchLoop.run(interval: seconds, count: count, fetch: { await snapshots(targets) },
+                                    wait: { try await wake.wait($0) }, pollNow: { wake.consume() }) { results, initial in
+                try emit(results, initial: initial)
+                for snapshot in results { previous[snapshot.endpoint] = snapshot }
+            }
+        } catch {
+            await stop(feed)
+            throw error
         }
+        await stop(feed)
+    }
+
+    /// Ends the stream before the process exits, so its connection is torn down completely.
+    private func stop(_ feed: Task<Void, Never>?) async {
+        feed?.cancel()
+        await feed?.value
+    }
+}
+
+struct PushServerOptions: ParsableArguments {
+    @Option(name: .customLong("push-server"), help: ArgumentHelp("SpacePush server for change streams.", valueName: "url"))
+    var url = DesktopNotification.defaultServer
+
+    @Option(name: .customLong("stream-server"), help: ArgumentHelp("Where the server serves /v1/stream, if not at --push-server.", valueName: "url"))
+    var streamURL: String?
+
+    /// Follows the change stream until cancelled, reporting connection problems on stderr.
+    /// `onEvent` receives `.connected` (state may have changed while disconnected) and changes.
+    /// A stream the server refuses (e.g. a space it does not list) ends with a message.
+    func follow(_ targets: [Target], onEvent: @escaping @Sendable (ChangeFeedEvent) async -> Void) async {
+        do {
+            let client = SpacePushClient(baseURL: try Resolver.webURL(url), headers: ["User-Agent": "spacestate/\(CLI.version)"])
+            let feed = ChangeFeed(client: client, subscriptions: DesktopNotification.subscriptions(targets),
+                                  streamBaseURL: try streamURL.map(Resolver.webURL))
+            for try await event in feed.events() {
+                if case .disconnected(let reason, let retryIn) = event {
+                    try? write("Change stream: \(Output.plain(reason)); reconnecting in \(retryIn.components.seconds) s.", to: .standardError)
+                }
+                await onEvent(event)
+            }
+        } catch is CancellationError {
+        } catch SpacePushError.httpStatus(let status, let reason) {
+            try? write("Change stream refused (\(status) \(Output.plain(reason ?? ""))): SpacePush follows only spaces in its directory.", to: .standardError)
+        } catch {
+            try? write("Change stream unavailable: \(Output.plain(String(describing: error))).", to: .standardError)
+        }
+    }
+}
+
+struct Notify: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Show desktop notifications when spaces open or close.",
+        discussion: """
+        Follows SpacePush's change stream and shows each confirmed change through notify-send \
+        (libnotify 0.8 or later), replacing the space's previous notification. Runs until stopped; \
+        a systemd user unit is in contrib/. Connection problems are reported on stderr.
+        """)
+
+    @Argument(help: "Space names or endpoint URLs. Defaults to your saved spaces.")
+    var spaces: [String] = []
+
+    @OptionGroup var server: PushServerOptions
+
+    @OptionGroup var lookup: DirectoryOptions
+
+    func run() async throws {
+        let targets = try await lookup.targets(spaces)
+        guard !targets.isEmpty else { throw usageFailure(noSavedSpaces) }
+        guard let notifySend = executable("notify-send") else {
+            throw usageFailure("notify-send was not found. Install libnotify.")
+        }
+        let shown = NotificationIDs()
+        try write("Following \(targets.count) space\(targets.count == 1 ? "" : "s") through \(server.url).", to: .standardError)
+        await server.follow(targets) { event in
+            guard case .change(let change) = event else { return }
+            let text = DesktopNotification.text(change)
+            let key = "\(change.endpoint.absoluteString)|\(change.room)"
+            let arguments = DesktopNotification.arguments(summary: text.summary, body: text.body, replacing: shown[key])
+            if let id = showNotification(notifySend, arguments) { shown[key] = id }
+        }
+        throw ExitCode.failure
+    }
+}
+
+/// Notification ids per topic, so a newer state replaces the older notification.
+final class NotificationIDs: Sendable {
+    private let ids = Mutex<[String: UInt32]>([:])
+    subscript(key: String) -> UInt32? {
+        get { ids.withLock { $0[key] } }
+        set { ids.withLock { $0[key] = newValue } }
+    }
+}
+
+func executable(_ name: String) -> URL? {
+    let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":")
+    return paths.map { URL(fileURLWithPath: String($0)).appending(component: name) }
+        .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+}
+
+/// Runs a notification helper and returns the id it printed.
+func showNotification(_ executable: URL, _ arguments: [String]) -> UInt32? {
+    let process = Process()
+    let output = Pipe()
+    process.executableURL = executable
+    process.arguments = arguments
+    process.standardOutput = output
+    do {
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return DesktopNotification.id(fromOutput: String(decoding: data, as: UTF8.self))
+    } catch {
+        try? write("notify-send failed: \(error)", to: .standardError)
+        return nil
     }
 }
 

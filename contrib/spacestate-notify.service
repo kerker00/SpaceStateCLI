@@ -1,0 +1,18 @@
+# Desktop notifications when your saved spaces open or close.
+# Install:
+#   cp contrib/spacestate-notify.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now spacestate-notify.service
+# Logs: journalctl --user -u spacestate-notify
+[Unit]
+Description=SpaceState desktop notifications
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/spacestate notify
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=graphical-session.target

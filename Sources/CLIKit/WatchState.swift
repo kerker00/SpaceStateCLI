@@ -32,9 +32,12 @@ public struct WatchState: Sendable {
 /// The production watch loop has injected time, waiting and I/O for deterministic
 /// tests. Expiry records preserve request times and do not consume the check count.
 public enum WatchLoop {
+    /// - Parameter pollNow: Asked after every wake; true checks before the interval ends,
+    ///   e.g. after a push event. The default never does.
     public static func run(interval: TimeInterval, count: Int?, fetch: () async throws -> [Snapshot],
                            now: () -> Date = { Date() },
                            wait: (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+                           pollNow: () -> Bool = { false },
                            emit: ([Snapshot], Bool) throws -> Void) async throws {
         guard interval.isFinite, interval > 0, count.map({ $0 > 0 }) ?? true else {
             throw UsageError("Invalid watch interval or check count")
@@ -59,7 +62,7 @@ public enum WatchLoop {
                 results = updated
                 // A delayed timer (e.g. system sleep) must publish the expired
                 // state before a possibly slow new network check.
-                if evaluatedAt >= pollAt { break }
+                if evaluatedAt >= pollAt || pollNow() { break }
                 let wake = WatchState.nextWake(results, after: evaluatedAt, pollAt: pollAt)
                 try await wait(.seconds(max(0, wake.timeIntervalSince(evaluatedAt))))
             }

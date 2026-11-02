@@ -94,7 +94,8 @@ LeineLab  ○ closed   for 2 h
 | `spacestate [<space> ...]` | Show whether spaces are open. Without spaces: your saved spaces. |
 | `spacestate info [<space> ...]` | Show available details: website, address, access hint, contacts, keymasters, feeds, links, projects. |
 | `spacestate search <text> [--open]` | Find spaces by name, city or address; open ones first. |
-| `spacestate watch [<space> ...] [-i 5m] [-n <checks>]` | Print the current state, then changes, failures and expiry between checks. |
+| `spacestate watch [<space> ...] [-i 5m] [-n <checks>] [--push]` | Print the current state, then changes, failures and expiry between checks. |
+| `spacestate notify [<space> ...]` | Show a desktop notification whenever a space opens or closes (unreleased). |
 | `spacestate add <space> ...` | Save spaces. |
 | `spacestate remove <space> ...` | Remove saved spaces. |
 
@@ -104,7 +105,7 @@ A space is a name or a SpaceAPI endpoint URL. Names come from the [SpaceAPI dire
 
 ### Sensors (unreleased)
 
-The current source uses the published Kit 0.3.3 sensor models. `info` lists all
+The current source uses the sensor models of the published Kit 0.4.1. `info` lists all
 typed readings with their units, location, sensor name, description and reported
 value-change time. Empty groups are omitted. Other sensor kinds, including compound
 wind/radiation data, are labelled `uninterpreted` and printed as JSON; they are not
@@ -218,11 +219,39 @@ Add `custom/spacestate` to your module list and configure:
 
 This is a persistent polling process (every 60 s; change it with `-i`). Do not add Waybar's `interval` setting to it. `--waybar` shows exactly one space: give it, or save exactly one. The output follows Waybar's `text`, `tooltip`, `class` and `alt` contract; `class` is `open`, `closed`, `unknown`, or `error`, and tooltip markup is escaped. Style `#custom-spacestate.open`, `.closed`, `.unknown`, and `.error` in your Waybar CSS.
 
+## Push and desktop notifications (unreleased)
+
+[SpacePush](https://github.com/kerker00/SpacePush) confirms opening changes
+once for all users and streams them as server-sent events. Two commands use
+that stream through SpaceStateKit's `ChangeFeed`:
+
+- `spacestate watch --push` checks a space as soon as SpacePush reports a
+  change for it, and after every (re)connection. Regular checks continue as a
+  fallback, every 15 minutes unless `-i` says otherwise. Output, exit codes and
+  `--json`/`--waybar` are unchanged, so the Waybar module above updates live with
+  `"exec": "spacestate watch --waybar --push mainframe"`.
+- `spacestate notify` shows each confirmed change of your saved spaces (or the
+  spaces given) through `notify-send`, replacing the space's previous
+  notification. It needs libnotify 0.8 or later and a notification daemon such
+  as mako, swaync or dunst. `contrib/spacestate-notify.service` runs it as a
+  systemd user service.
+
+Both reconnect on their own: after failures with backoff from 1 second up to 5
+minutes, after the server's normal stream end with its retry hint. A silent
+connection (also after suspend) is detected within 60 seconds. Problems are
+reported on stderr. SpacePush follows only spaces in the SpaceAPI directory; a
+stream with another endpoint is refused and `watch --push` continues with
+regular checks. Mainframe's rooms are not yet selectable here.
+
+`--push-server <url>` selects the SpacePush server (default
+`https://push.grafixmafia.net`), `--stream-server <url>` a separate stream
+address, e.g. `http://127.0.0.1:<stream port>` for a local SpacePush.
+
 ## Development
 
 In the local multi-repository SpaceState workspace, the shared roadmap is `../Plan.md`. It is a workspace file, not part of this public repository.
 
-The normal build pins SpaceStateKit to `0.3.3`. To work on sibling checkouts:
+The normal build pins SpaceStateKit to `0.4.1`. To work on sibling checkouts:
 
 ```sh
 SPACESTATEKIT_PATH=../SpaceStateKit swift test

@@ -6,8 +6,9 @@
   change (15-minute fallback interval), and `notify`, which shows confirmed
   changes as desktop notifications through `notify-send`. Add a systemd user unit
   in `contrib/`.
-- Adopt exact published Kit 0.4.0 for the change stream, including the resolved
-  commit in Package.resolved.
+- Adopt exact published Kit 0.4.1 for the change stream and its fix of a crash on
+  Linux when a URL session was released, including the resolved commit in
+  Package.resolved.
 - Adopt exact published Kit 0.3.3 for sensor models, including the resolved commit
   in Package.resolved. ArgumentParser remains at 1.8.2.
 - Add full sensor readings and metadata to `info` text, with the same optional

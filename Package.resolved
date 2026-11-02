@@ -1,13 +1,13 @@
 {
-  "originHash" : "ae7461fff8c382b90ad4d34a58e48d9e24368242caadf59b0493165359919fae",
+  "originHash" : "ac4133101bc8eb1380b2f91461b67db32b0631ea5a33135bca7cd08fd22509bb",
   "pins" : [
     {
       "identity" : "spacestatekit",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/kerker00/SpaceStateKit.git",
       "state" : {
-        "revision" : "3232fce2fb3a5d98f1e7f2a4ef9ec24375ce37e6",
-        "version" : "0.4.0"
+        "revision" : "28cfdf3c38c988c6e2a2dcac9af5dafe13f69222",
+        "version" : "0.4.1"
       }
     },
     {

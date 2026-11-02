@@ -105,7 +105,7 @@ A space is a name or a SpaceAPI endpoint URL. Names come from the [SpaceAPI dire
 
 ### Sensors (unreleased)
 
-The current source uses the sensor models of the published Kit 0.4.0. `info` lists all
+The current source uses the sensor models of the published Kit 0.4.1. `info` lists all
 typed readings with their units, location, sensor name, description and reported
 value-change time. Empty groups are omitted. Other sensor kinds, including compound
 wind/radiation data, are labelled `uninterpreted` and printed as JSON; they are not
@@ -251,7 +251,7 @@ address, e.g. `http://127.0.0.1:<stream port>` for a local SpacePush.
 
 In the local multi-repository SpaceState workspace, the shared roadmap is `../Plan.md`. It is a workspace file, not part of this public repository.
 
-The normal build pins SpaceStateKit to `0.4.0`. To work on sibling checkouts:
+The normal build pins SpaceStateKit to `0.4.1`. To work on sibling checkouts:
 
 ```sh
 SPACESTATEKIT_PATH=../SpaceStateKit swift test

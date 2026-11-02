@@ -76,7 +76,7 @@ def run(*args, code=0):
     return result
 try:
     assert 'usage: spacestate' in run('--help').stdout.lower()
-    assert run('--version').stdout.strip() == '0.3.0'
+    assert run('--version').stdout.strip() == '0.4.0'
     completion = run('--generate-completion-script','zsh').stdout
     assert '#compdef' in completion and 'spacestate' in completion
     invalid_urls = ['file:///tmp/spacestate-invalid',

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-11-02
 
 - Add `watch --push`, which checks as soon as SpacePush's change stream reports a
   change (15-minute fallback interval), and `notify`, which shows confirmed
